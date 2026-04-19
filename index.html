@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>3D Speedometer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: radial-gradient(circle at center, #1a1a2e 0%, #0a0a0a 100%);
+    font-family: 'Arial', sans-serif;
+    color: #fff;
+  }
+  #canvas-container {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+  }
+  #controls {
+    display: none;
+  }
+  #info {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 12px 24px;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 12px;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+    color: #00ffff;
+    text-align: center;
+    user-select: none;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div id="controls"></div>
+  <div id="info">SPACEBAR to accelerate (release to brake) &bull; B for cruise</div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    let scene, camera, renderer;
+    let outerSphere, innerSphere;
+    let speedSprite, speedCanvas, speedCtx, speedTexture;
+    let sceneGroup;
+
+    let speed = 0;
+    const MAX_SPEED = 300;
+    let acceleration = 0;
+
+    let isAccelerating = false;
+    let isCruising = false;
+
+    let isDragging = false;
+    let prevMouse = { x: 0, y: 0 };
+    let rotation = { x: 0, y: 0 };
+
+    const clock = new THREE.Clock();
+
+    function init() {
+      scene = new THREE.Scene();
+
+      camera = new THREE.PerspectiveCamera(
+        75,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        1000
+      );
+      camera.position.set(0, 0, 6);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setClearColor(0x000000, 0);
+      document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+      const ambient = new THREE.AmbientLight(0x404040, 1);
+      scene.add(ambient);
+
+      const light1 = new THREE.PointLight(0x00ffff, 2);
+      light1.position.set(5, 5, 5);
+      scene.add(light1);
+
+      const light2 = new THREE.PointLight(0x00ff88, 2);
+      light2.position.set(-5, -5, 5);
+      scene.add(light2);
+
+      sceneGroup = new THREE.Group();
+      scene.add(sceneGroup);
+
+      const outerGeo = new THREE.SphereGeometry(2.5, 64, 64);
+      const outerMat = new THREE.MeshBasicMaterial({
+        color: 0x00ffff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.6,
+      });
+      outerSphere = new THREE.Mesh(outerGeo, outerMat);
+      outerSphere.userData.originalPositions = Float32Array.from(
+        outerGeo.attributes.position.array
+      );
+      sceneGroup.add(outerSphere);
+
+      const innerGeo = new THREE.SphereGeometry(1.8, 48, 48);
+      const innerMat = new THREE.MeshBasicMaterial({
+        color: 0x00ff88,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.4,
+      });
+      innerSphere = new THREE.Mesh(innerGeo, innerMat);
+      innerSphere.userData.originalPositions = Float32Array.from(
+        innerGeo.attributes.position.array
+      );
+      sceneGroup.add(innerSphere);
+
+      speedCanvas = document.createElement('canvas');
+      speedCanvas.width = 512;
+      speedCanvas.height = 512;
+      speedCtx = speedCanvas.getContext('2d');
+      speedTexture = new THREE.CanvasTexture(speedCanvas);
+      speedTexture.minFilter = THREE.LinearFilter;
+      const spriteMat = new THREE.SpriteMaterial({
+        map: speedTexture,
+        transparent: true,
+      });
+      speedSprite = new THREE.Sprite(spriteMat);
+      speedSprite.scale.set(2, 2, 1);
+      sceneGroup.add(speedSprite);
+
+      drawSpeedText();
+
+      bindEvents();
+    }
+
+    function drawSpeedText() {
+      const ctx = speedCtx;
+      const w = speedCanvas.width;
+      const h = speedCanvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      ctx.fillStyle = '#00ffff';
+      ctx.font = 'bold 360px Arial';
+      ctx.fillText(Math.round(speed).toString(), w / 2, h / 2 - 80);
+
+      ctx.fillStyle = '#00ff88';
+      ctx.font = 'bold 120px Arial';
+      ctx.fillText('km/h', w / 2, h / 2 + 160);
+
+      speedTexture.needsUpdate = true;
+    }
+
+    function updatePhysics() {
+      if (isCruising) {
+        acceleration = 0;
+      } else if (isAccelerating) {
+        speed += 0.8;
+        acceleration = 2.5;
+      } else {
+        if (speed > 0) {
+          speed -= 1.2;
+          acceleration = -4.0;
+        } else {
+          acceleration = 0;
+        }
+      }
+
+      if (!isAccelerating && !isCruising && speed > 0 && acceleration > -1.2) {
+        speed -= 0.2;
+        acceleration = -0.5;
+      }
+
+      if (speed < 0) speed = 0;
+      if (speed > MAX_SPEED) speed = MAX_SPEED;
+    }
+
+    function deformOuterSphere(time, speedRatio) {
+      const posAttr = outerSphere.geometry.attributes.position;
+      const orig = outerSphere.userData.originalPositions;
+      const arr = posAttr.array;
+
+      for (let i = 0; i < arr.length; i += 3) {
+        const ox = orig[i];
+        const oy = orig[i + 1];
+        const oz = orig[i + 2];
+        const distance = Math.sqrt(ox * ox + oy * oy + oz * oz);
+        const length = distance || 1;
+        const nx = ox / length;
+        const ny = oy / length;
+        const nz = oz / length;
+
+        const vertexIndex = i / 3;
+        const wave = Math.sin(time * 2 + distance * 2) * speedRatio * 0.3;
+        const pulse = Math.sin(time * 3 + vertexIndex * 0.1) * speedRatio * 0.15;
+        const offset = wave + pulse;
+
+        arr[i] = ox + nx * offset;
+        arr[i + 1] = oy + ny * offset;
+        arr[i + 2] = oz + nz * offset;
+      }
+      posAttr.needsUpdate = true;
+    }
+
+    function deformInnerSphere(time, accelRatio) {
+      const posAttr = innerSphere.geometry.attributes.position;
+      const orig = innerSphere.userData.originalPositions;
+      const arr = posAttr.array;
+
+      for (let i = 0; i < arr.length; i += 3) {
+        const ox = orig[i];
+        const oy = orig[i + 1];
+        const oz = orig[i + 2];
+        const length = Math.sqrt(ox * ox + oy * oy + oz * oz) || 1;
+        const nx = ox / length;
+        const ny = oy / length;
+        const nz = oz / length;
+
+        const vertexIndex = i / 3;
+        const angle = Math.atan2(oy, ox);
+        const spike = Math.sin(time * 4 + angle * 5) * accelRatio * 0.4;
+        const rot = Math.cos(time * 2 + vertexIndex * 0.05) * accelRatio * 0.2;
+        const offset = spike + rot;
+
+        arr[i] = ox + nx * offset;
+        arr[i + 1] = oy + ny * offset;
+        arr[i + 2] = oz + nz * offset;
+      }
+      posAttr.needsUpdate = true;
+    }
+
+    function resetSphere(mesh) {
+      const posAttr = mesh.geometry.attributes.position;
+      const orig = mesh.userData.originalPositions;
+      posAttr.array.set(orig);
+      posAttr.needsUpdate = true;
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const time = clock.getElapsedTime();
+
+      updatePhysics();
+
+      const speedRatio = speed / MAX_SPEED;
+      const accelRatio = Math.abs(acceleration) / 5;
+
+      if (speed > 0) {
+        deformOuterSphere(time, speedRatio);
+        deformInnerSphere(time, accelRatio);
+
+        outerSphere.rotation.y += speedRatio * 0.01;
+        outerSphere.rotation.x += speedRatio * 0.005;
+
+        innerSphere.rotation.y += accelRatio * -0.02;
+        innerSphere.rotation.z += accelRatio * 0.015;
+      } else {
+        resetSphere(outerSphere);
+        resetSphere(innerSphere);
+      }
+
+      outerSphere.material.color.setHSL(0.5 - speedRatio * 0.3, 1, 0.5);
+      innerSphere.material.color.setHSL(0.4 + speedRatio * 0.5 * 0.5, 1, 0.5);
+
+      sceneGroup.rotation.x = rotation.x;
+      sceneGroup.rotation.y = rotation.y;
+
+      drawSpeedText();
+
+      renderer.render(scene, camera);
+    }
+
+    function bindEvents() {
+      window.addEventListener('resize', onResize);
+
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') {
+          e.preventDefault();
+          isAccelerating = true;
+          isCruising = false;
+        } else if (e.code === 'KeyB') {
+          e.preventDefault();
+          isCruising = true;
+          isAccelerating = false;
+        }
+      });
+
+      window.addEventListener('keyup', (e) => {
+        if (e.code === 'Space') {
+          e.preventDefault();
+          isAccelerating = false;
+        }
+      });
+
+      const dom = renderer.domElement;
+
+      dom.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        prevMouse.x = e.clientX;
+        prevMouse.y = e.clientY;
+      });
+      window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - prevMouse.x;
+        const dy = e.clientY - prevMouse.y;
+        rotation.y += dx * 0.005;
+        rotation.x += dy * 0.005;
+        prevMouse.x = e.clientX;
+        prevMouse.y = e.clientY;
+      });
+      window.addEventListener('mouseup', () => {
+        isDragging = false;
+      });
+
+      dom.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        camera.position.z += e.deltaY * 0.005;
+        camera.position.z = Math.max(3, Math.min(12, camera.position.z));
+      }, { passive: false });
+    }
+
+    function onResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(window.devicePixelRatio);
+    }
+
+    init();
+    animate();
+  </script>
+</body>
+</html>

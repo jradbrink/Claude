@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Black Box — Körlogg</title>
+<style>
+  :root {
+    --surface: #fcfcfb; --surface-2: #ffffff;
+    --ink: #0b0b0b; --ink-soft: #52514e; --ink-muted: #8b8a84;
+    --series: #2a78d6; --grid: #e8e7e2; --rule: #d6d5cf; --row: #eceae4;
+    --bad: #b3261e; --card-border: #e3e2dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1a1a19; --surface-2: #222221;
+      --ink: #f4f4f2; --ink-soft: #c3c2b7; --ink-muted: #8b8a84;
+      --series: #3987e5; --grid: #33332f; --rule: #44443f; --row: #2c2c29;
+      --bad: #e66767; --card-border: #33332f;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--surface); color: var(--ink);
+    padding: 24px 16px 64px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  .kicker { font-size: 11px; font-weight: 700; letter-spacing: .08em;
+            color: var(--ink-muted); text-transform: uppercase; }
+  h1 { font-size: 26px; margin: 2px 0 4px; }
+  .meta { color: var(--ink-soft); font-size: 13px; }
+  header { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px;
+           display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 7px;
+    border: 1px solid var(--rule); background: var(--surface-2); color: var(--ink); cursor: pointer;
+  }
+  button.primary { background: var(--series); border-color: var(--series); color: #fff; }
+
+  /* login */
+  .login { max-width: 340px; margin: 10vh auto 0; display: grid; gap: 10px; }
+  .login input {
+    font: inherit; padding: 9px 12px; border-radius: 7px;
+    border: 1px solid var(--rule); background: var(--surface-2); color: var(--ink);
+  }
+  .error { color: var(--bad); font-size: 13px; min-height: 1.2em; }
+
+  /* stat tiles */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+           gap: 10px; margin-bottom: 26px; }
+  .stat { background: var(--surface-2); border: 1px solid var(--card-border);
+          border-radius: 10px; padding: 12px 14px; }
+  .stat b { display: block; font-size: 21px; line-height: 1.2; }
+  .stat span { font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase;
+               color: var(--ink-muted); }
+
+  h2 { font-size: 16px; margin: 26px 0 10px; }
+  .chart-card { background: var(--surface-2); border: 1px solid var(--card-border);
+                border-radius: 10px; padding: 16px 12px 6px; }
+  .tooltip {
+    position: fixed; pointer-events: none; z-index: 10; display: none;
+    background: var(--ink); color: var(--surface); font-size: 12px;
+    padding: 5px 9px; border-radius: 6px; white-space: nowrap;
+  }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--card-border);
+                border-radius: 10px; background: var(--surface-2); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 720px; }
+  th, td { padding: 8px 12px; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  thead th { color: var(--ink-soft); font-weight: 600; border-bottom: 1.5px solid var(--rule);
+             position: sticky; top: 0; background: var(--surface-2); }
+  tbody tr { border-bottom: 1px solid var(--row); }
+  tbody tr:last-child { border-bottom: none; }
+  .viol { color: var(--bad); font-weight: 700; }
+  .ok { color: var(--ink-muted); }
+  .footnote { margin-top: 18px; font-size: 12px; color: var(--ink-muted); }
+  .demo-banner { background: var(--series); color: #fff; border-radius: 8px;
+                 padding: 8px 14px; font-size: 13px; margin-bottom: 18px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="login" class="login hidden">
+    <div>
+      <div class="kicker">Black Box</div>
+      <h1>Körlogg</h1>
+    </div>
+    <input id="email" type="email" placeholder="E-post" autocomplete="username">
+    <input id="password" type="password" placeholder="Lösenord" autocomplete="current-password">
+    <button class="primary" id="loginBtn">Logga in</button>
+    <div class="error" id="loginError"></div>
+  </div>
+
+  <div id="app" class="hidden">
+    <div id="demoBanner" class="demo-banner hidden">
+      Demoläge — fyll i SUPABASE_URL och SUPABASE_ANON_KEY längst ner i index.html
+      för att visa riktiga data.
+    </div>
+    <header>
+      <div>
+        <div class="kicker">Ägarlogg — fordonsanvändning</div>
+        <h1 id="vehicleName">…</h1>
+        <div class="meta" id="vehicleMeta"></div>
+      </div>
+      <button id="logoutBtn" class="hidden">Logga ut</button>
+    </header>
+
+    <div class="stats" id="stats"></div>
+
+    <h2>Körningar per månad (senaste 12 månaderna)</h2>
+    <div class="chart-card"><div id="chart"></div></div>
+
+    <h2>Alla körningar (<span id="tripCount">0</span>)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Datum</th><th>Start</th><th>Varaktighet</th><th>Sträcka (est.)</th>
+          <th>Uppvärmning</th><th>Max r/min</th><th>Max kylv.</th><th>Max olja</th>
+          <th>Överträdelser</th>
+        </tr></thead>
+        <tbody id="tripRows"></tbody>
+      </table>
+    </div>
+
+    <p class="footnote">
+      Automatiskt registrerat via OBD-II (varvtal, kylvätsketemperatur, hastighet)
+      och fordonets CAN-buss (oljetemperatur) utan manuell inmatning. Sträckor är
+      uppskattade ur hastighetssignalen. ”Överträdelse” = varvtal över 3&nbsp;000 r/min
+      innan motorn nått arbetstemperatur. PDF-intyg för försäkring/försäljning
+      genereras med <code>report/generate_report.py</code>.
+    </p>
+  </div>
+
+  <div class="tooltip" id="tooltip"></div>
+</div>
+
+<script type="module">
+/* ================= konfiguration =================
+   Klistra in värdena från Supabase → Settings → API.
+   Anon-nyckeln är gjord för att vara publik; åtkomsten styrs av
+   RLS-policyerna i supabase/migrations/0003_dashboard_read.sql
+   (kräver inloggning). Tomt = demoläge med exempeldata.            */
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
+/* ================================================= */
+
+const $ = (id) => document.getElementById(id);
+const MONTHS = ["jan","feb","mar","apr","maj","jun","jul","aug","sep","okt","nov","dec"];
+const DEMO = !SUPABASE_URL;
+
+function fmtDur(s) {
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
+}
+const fmtDate = (d) => d.toLocaleDateString("sv-SE");
+const fmtTime = (d) => d.toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+const median = (xs) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+function computeStats(trips) {
+  const n = trips.length;
+  const km = trips.reduce((a, t) => a + (+t.distance_km_est || 0), 0);
+  const h = trips.reduce((a, t) => a + (t.duration_s || 0), 0) / 3600;
+  const clean = trips.filter((t) => !t.cold_violation_count).length;
+  const cw = trips.map((t) => t.coolant_warmup_s ?? t.warmup_s).filter((x) => x != null);
+  const ow = trips.map((t) => t.oil_warmup_s).filter((x) => x != null);
+  const last = n ? new Date(trips[0].started_at) : null; // trips sorted desc
+  return { n, km, h, clean, medCool: median(cw), medOil: median(ow), last };
+}
+
+function renderStats(s) {
+  const warm = s.medCool != null
+    ? `${Math.round(s.medCool / 60)}${s.medOil != null ? " / " + Math.round(s.medOil / 60) : ""} min`
+    : "–";
+  const tiles = [
+    [s.n, "Antal körningar"],
+    [`${Math.round(s.km).toLocaleString("sv-SE")} km`, "Total sträcka (est.)"],
+    [`${s.h.toFixed(1)} h`, "Total körtid"],
+    [s.n ? `${Math.round((s.clean / s.n) * 100)} %` : "–", "Utan överträdelse"],
+    [s.last ? fmtDate(s.last) : "–", "Senast körd"],
+    [warm, "Medianuppvärmning kylv./olja"],
+  ];
+  $("stats").innerHTML = tiles
+    .map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`)
+    .join("");
+}
+
+function monthlyBuckets(trips) {
+  const now = new Date();
+  const keys = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    keys.push({ y: d.getFullYear(), m: d.getMonth(), count: 0 });
+  }
+  for (const t of trips) {
+    const d = new Date(t.started_at);
+    const k = keys.find((k) => k.y === d.getFullYear() && k.m === d.getMonth());
+    if (k) k.count++;
+  }
+  return keys;
+}
+
+function renderChart(buckets) {
+  const W = 920, H = 220, L = 34, R = 6, T = 12, B = 26;
+  const pw = W - L - R, ph = H - T - B;
+  const maxC = Math.max(4, ...buckets.map((b) => b.count));
+  const yMax = Math.ceil(maxC / 4) * 4;
+  const slot = pw / buckets.length, bw = slot * 0.55;
+  let g = "";
+  for (let i = 0; i <= 4; i++) {
+    const y = T + ph - (ph * i) / 4;
+    if (i > 0) g += `<line x1="${L}" y1="${y}" x2="${L + pw}" y2="${y}" stroke="var(--grid)" stroke-width="1"/>`;
+    g += `<text x="${L - 7}" y="${y + 3.5}" text-anchor="end" font-size="10.5" fill="var(--ink-muted)">${(yMax * i) / 4}</text>`;
+  }
+  let bars = "";
+  buckets.forEach((b, i) => {
+    const x = L + i * slot + (slot - bw) / 2;
+    const label = MONTHS[b.m] + (b.m === 0 || i === 0 ? ` ${String(b.y).slice(2)}` : "");
+    if (b.count > 0) {
+      const bh = (ph * b.count) / yMax, y = T + ph - bh, r = Math.min(3, bh);
+      bars += `<path d="M${x},${T + ph} v${-(bh - r)} q0,${-r} ${r},${-r} h${bw - 2 * r} q${r},0 ${r},${r} v${bh - r} z" fill="var(--series)"/>`;
+    }
+    bars += `<rect x="${L + i * slot}" y="${T}" width="${slot}" height="${ph}" fill="transparent"
+              data-tip="${MONTHS[b.m]} ${b.y}: ${b.count} körning${b.count === 1 ? "" : "ar"}"/>`;
+    bars += `<text x="${L + i * slot + slot / 2}" y="${H - 8}" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">${label}</text>`;
+  });
+  g += `<line x1="${L}" y1="${T + ph}" x2="${L + pw}" y2="${T + ph}" stroke="var(--rule)" stroke-width="1.2"/>`;
+  $("chart").innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Körningar per månad">${g}${bars}</svg>`;
+
+  const tip = $("tooltip");
+  $("chart").querySelectorAll("rect[data-tip]").forEach((r) => {
+    r.addEventListener("mousemove", (e) => {
+      tip.textContent = r.dataset.tip;
+      tip.style.display = "block";
+      tip.style.left = e.clientX + 12 + "px";
+      tip.style.top = e.clientY - 30 + "px";
+    });
+    r.addEventListener("mouseleave", () => (tip.style.display = "none"));
+  });
+}
+
+function renderTable(trips) {
+  $("tripCount").textContent = trips.length;
+  $("tripRows").innerHTML = trips
+    .map((t) => {
+      const d = new Date(t.started_at);
+      const warm = t.warmup_s != null ? `${Math.round(t.warmup_s / 60)} min` : "ej varm";
+      const v = t.cold_violation_count || 0;
+      return `<tr>
+        <td>${fmtDate(d)}</td><td>${fmtTime(d)}</td>
+        <td>${fmtDur(t.duration_s || 0)}</td>
+        <td>${(+t.distance_km_est || 0).toFixed(1)} km</td>
+        <td>${warm}</td>
+        <td>${t.max_rpm ?? "–"}</td>
+        <td>${t.max_coolant_c != null ? Math.round(t.max_coolant_c) + " °C" : "–"}</td>
+        <td>${t.max_oil_temp_c != null ? Math.round(t.max_oil_temp_c) + " °C" : "–"}</td>
+        <td class="${v ? "viol" : "ok"}">${v || "inga"}</td>
+      </tr>`;
+    })
+    .join("");
+}
+
+function show(vehicle, trips) {
+  $("vehicleName").textContent = vehicle?.display_name || "Fordon";
+  $("vehicleMeta").textContent = [
+    vehicle?.vin ? `VIN: ${vehicle.vin}` : null,
+    `Uppdaterad: ${new Date().toLocaleString("sv-SE")}`,
+  ].filter(Boolean).join("  •  ");
+  renderStats(computeStats(trips));
+  renderChart(monthlyBuckets(trips));
+  renderTable(trips);
+  $("app").classList.remove("hidden");
+  $("login").classList.add("hidden");
+}
+
+/* ---------- demoläge ---------- */
+function demoTrips() {
+  const trips = [];
+  let seed = 42;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const now = Date.now();
+  for (let day = 335; day >= 1; day--) {
+    const dt = new Date(now - day * 864e5);
+    const m = dt.getMonth();
+    const p = [0.08,0.08,0.25,0.25,0.45,0.45,0.45,0.45,0.45,0.25,0.25,0.08][m];
+    if (rnd() < p) {
+      const dur = 900 + Math.floor(rnd() * 6300);
+      const viol = rnd() < 0.06 ? 1 : 0;
+      trips.push({
+        started_at: new Date(dt.setHours(8 + Math.floor(rnd() * 11))).toISOString(),
+        duration_s: dur,
+        distance_km_est: (dur / 3600) * (45 + rnd() * 40),
+        warmup_s: 600 + Math.floor(rnd() * 600),
+        coolant_warmup_s: 400 + Math.floor(rnd() * 300),
+        oil_warmup_s: 900 + Math.floor(rnd() * 500),
+        max_rpm: 3200 + Math.floor(rnd() * 3200),
+        max_coolant_c: 88 + rnd() * 8,
+        max_oil_temp_c: 85 + rnd() * 15,
+        cold_violation_count: viol,
+      });
+    }
+  }
+  return trips.reverse(); // newest first
+}
+
+/* ---------- riktiga data ---------- */
+async function boot() {
+  if (DEMO) {
+    $("demoBanner").classList.remove("hidden");
+    show({ display_name: "Porsche 911 Carrera 4S (996.2)", vin: "WP0ZZZ99Z2S600000" }, demoTrips());
+    return;
+  }
+  const { createClient } = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
+  const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  async function loadData() {
+    const { data: vehicles } = await sb.from("vehicles").select("*").limit(1);
+    const trips = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await sb.from("trips").select("*")
+        .order("started_at", { ascending: false }).range(from, from + 999);
+      if (error) throw error;
+      trips.push(...data);
+      if (data.length < 1000) break;
+    }
+    show(vehicles?.[0], trips);
+    $("logoutBtn").classList.remove("hidden");
+  }
+
+  $("loginBtn").addEventListener("click", async () => {
+    $("loginError").textContent = "";
+    const { error } = await sb.auth.signInWithPassword({
+      email: $("email").value.trim(),
+      password: $("password").value,
+    });
+    if (error) $("loginError").textContent = "Fel e-post eller lösenord.";
+    else loadData().catch((e) => ($("loginError").textContent = e.message));
+  });
+  $("password").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") $("loginBtn").click();
+  });
+  $("logoutBtn").addEventListener("click", async () => {
+    await sb.auth.signOut();
+    location.reload();
+  });
+
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) loadData().catch(console.error);
+  else $("login").classList.remove("hidden");
+}
+boot();
+</script>
+</body>
+</html>

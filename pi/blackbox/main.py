@@ -105,8 +105,11 @@ class Daemon:
     # -- sync & push (background thread; network comes and goes) ------------
 
     def queue_push(self, summary, recovered: bool = False) -> None:
-        if self.notifier is not None:
-            self.push_queue.add(format_trip_message(summary, recovered))
+        if self.notifier is None:
+            return
+        if self.cfg.notify.only_violations and summary.cold_violation_count == 0:
+            return
+        self.push_queue.add(format_trip_message(summary, recovered))
 
     def _sync_worker(self) -> None:
         if self.sync is not None:

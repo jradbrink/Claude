@@ -52,13 +52,13 @@ chime_on_warm = true         # two beeps at "fully warm"
 chime_on_coolant_warm = false# one beep at the intermediate stage (V1.5)
 
 [notify]
-# Push a trip summary to your phone via ntfy (install the ntfy app and
-# subscribe to the same topic). The topic name is the only secret — make it
-# long and random. Empty topic = disabled. NOTE: sent when the Pi has
-# network (garage WiFi); with ignition-switched power the summary for a
-# drive typically arrives on the next engine start (journal recovery).
+# Optional push via ntfy (install the ntfy app, subscribe to the topic).
+# The web dashboard (web/) is the primary place to browse trips — push is
+# for exceptions. only_violations = true means clean trips are not pushed.
+# Topic name is the only secret — long and random. Empty topic = disabled.
 ntfy_url = "https://ntfy.sh"
 topic = ""
+only_violations = true
 timeout_s = 5.0
 
 [led]

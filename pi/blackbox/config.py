@@ -75,9 +75,11 @@ class BuzzerConfig:
 
 @dataclass(frozen=True)
 class NotifyConfig:
-    """Push to phone via ntfy. Enabled when topic is set."""
+    """Push to phone via ntfy. Enabled when topic is set. The dashboard is
+    the primary place to read logs; push is for exceptions."""
     ntfy_url: str = "https://ntfy.sh"
     topic: str = ""
+    only_violations: bool = True  # skip "trip done" pushes for clean trips
     timeout_s: float = 5.0
 
     @property

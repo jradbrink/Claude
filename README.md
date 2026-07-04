@@ -58,18 +58,40 @@ Tyst i övrigt — ingen konstant statuslampa. En RGB-LED stöds fortfarande fö
 den som vill (`[led] enabled = true`, BCM 17/27/22, gemensam katod, 3×330 Ω),
 men är avstängd som default.
 
-## Push till telefonen
+## Webbdashboard — alla loggar på en sida
 
-Efter varje körning skickas en sammanfattning till din telefon via
-[ntfy](https://ntfy.sh) — gratis, inget konto, ingen egen server:
+`web/index.html` är hela dashboarden: nyckeltal, körfrekvens per månad och
+en tabell med samtliga körningar, direkt ur Supabase. Inloggningsskyddad
+(Supabase Auth), mörkt/ljust läge, mobilvänlig.
 
-1. Installera ntfy-appen (iOS/Android) och prenumerera på ett eget ämne med
-   långt slumpat namn, t.ex. `blackbox-996-h7Kq2mXw9p`.
+Setup (engångs, ~10 min):
+
+1. Kör `supabase/migrations/0003_dashboard_read.sql` — ger inloggade
+   användare läsrättigheter (anon ser ingenting, Pi:n skriver med
+   service-nyckeln som förut).
+2. Skapa din användare i Supabase: Authentication → Users → Add user.
+   Låt publik självregistrering vara avstängd.
+3. Fyll i `SUPABASE_URL` och `SUPABASE_ANON_KEY` i konfig-blocket längst
+   ner i `web/index.html` (anon-nyckeln är gjord för att vara publik —
+   åtkomsten styrs av RLS + inloggningen).
+4. Publicera filen var du vill — GitHub Pages, Netlify eller Vercel
+   (gratis; det är en enda statisk fil). Utan konfig visar sidan ett
+   demoläge med exempeldata så du kan förhandsgranska direkt.
+
+Dashboarden är stället du *tittar*; PDF:en (`report/`) är det du *skickar*
+till försäkringsbolag eller köpare.
+
+## Push till telefonen (valbart — endast avvikelser)
+
+Med [ntfy](https://ntfy.sh) (gratis, inget konto) kan Pi:n pusha vid
+kallstartsöverträdelser — default skickas **bara** körningar med
+överträdelse (`only_violations = true`); rena körningar läser du i
+dashboarden i stället. Sätt `only_violations = false` om du vill ha
+kvitto på varje körning.
+
+1. Installera ntfy-appen och prenumerera på ett ämne med långt slumpat
+   namn, t.ex. `blackbox-996-h7Kq2mXw9p`.
 2. Sätt samma namn i `[notify] topic` i `/etc/blackbox.toml`.
-
-Exempel: *"Körning klar ✔ — 42 min, 38.2 km (est), uppvärmd efter 23 min
-(kylvätska 14, olja 23), max 4200 rpm, inga kallstartsöverträdelser"*.
-Körningar med överträdelse skickas med hög prioritet.
 
 Notiser köas beständigt på disk (`push_queue.json`) och skickas i ordning så
 fort nät finns — de överlever strömavbrott och tappas aldrig.

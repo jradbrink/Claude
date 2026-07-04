@@ -33,12 +33,15 @@ det som står här.
    └──────────────────┼────────────────────────────────────────────────┘
                       │  Mobil-hotspot under körning / ev. 4G-dongel — synk när nät finns
                       ▼
-        Supabase (Postgres + PostgREST)
+        Supabase (Postgres + PostgREST + Auth)
          • vehicles, devices, trips, cold_events
                       │
-                      ▼
-        report/generate_report.py  ──►  Ägarrapport.pdf
-        (körs på Mac/server, läser Supabase eller Pi:ns SQLite direkt)
+        ┌─────────────┴──────────────┐
+        ▼                            ▼
+  web/index.html             report/generate_report.py ──► Ägarrapport.pdf
+  (dashboard: alla loggar,   (PDF-intyg för tredje part — försäkring,
+   inloggningsskyddad,        besiktning, försäljning)
+   statisk sida, gratis host)
 ```
 
 ### Designprinciper
@@ -230,6 +233,10 @@ röd = KALL, röd snabb blink = överträdelse, gul = KYLV. VARM, grön = UPPVÄ
   strömavbrott. Upsert (`Prefer: resolution=merge-duplicates`,
   `on_conflict=id`) av trips först, sedan cold_events (FK-ordning). Rader markeras
   `synced` i SQLite först efter 2xx-svar. `devices.last_seen_at` uppdateras som hälsopuls.
+- **Dashboard:** `web/index.html` — en statisk sida (Supabase Auth-inloggning +
+  anon-nyckel; RLS-policyer i migration 0003 ger endast SELECT till inloggade).
+  Nyckeltal, månadsgraf och komplett körtabell. Det är den *primära* konsumtionsytan
+  för loggarna; telefonpush är default nedskalad till enbart överträdelser.
 - **Rapport:** `report/generate_report.py` läser Supabase (eller Pi:ns SQLite direkt med
   `--local-db`), aggregerar och renderar PDF med ReportLab: sidhuvud med bil + VIN +
   period, nyckeltalsrad (antal körningar, sträcka, körtid, andel körningar utan

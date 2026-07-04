@@ -133,7 +133,8 @@ class Stats:
     total_hours: float
     clean_share: float | None  # share of trips with zero cold violations
     last_driven: datetime | None
-    median_warmup_min: float | None
+    median_warmup_min: float | None       # coolant warm-up
+    median_oil_warmup_min: float | None   # oil warm-up (V1.5 CAN data)
     monthly: list[tuple[str, int]]  # last 12 months, oldest first
 
 
@@ -146,7 +147,14 @@ def compute_stats(trips: list[dict], today: date) -> Stats:
     total_km = sum(float(t.get("distance_km_est") or 0) for t in trips)
     total_hours = sum(int(t.get("duration_s") or 0) for t in trips) / 3600
     clean = sum(1 for t in trips if not t.get("cold_violation_count"))
-    warmups = [t["warmup_s"] for t in trips if t.get("warmup_s") is not None]
+    # Older rows only have warmup_s (coolant criterion); newer rows split
+    # coolant and oil warm-up explicitly.
+    warmups = [
+        t.get("coolant_warmup_s", t.get("warmup_s"))
+        for t in trips
+        if t.get("coolant_warmup_s", t.get("warmup_s")) is not None
+    ]
+    oil_warmups = [t["oil_warmup_s"] for t in trips if t.get("oil_warmup_s") is not None]
 
     counts: dict[tuple[int, int], int] = {}
     for t in trips:
@@ -172,6 +180,9 @@ def compute_stats(trips: list[dict], today: date) -> Stats:
         clean_share=(clean / n) if n else None,
         last_driven=parse_ts(trips[-1]["started_at"]) if trips else None,
         median_warmup_min=(statistics.median(warmups) / 60) if warmups else None,
+        median_oil_warmup_min=(
+            statistics.median(oil_warmups) / 60 if oil_warmups else None
+        ),
         monthly=monthly,
     )
 
@@ -315,13 +326,17 @@ def build_pdf(
     warm_txt = (
         f"{stats.median_warmup_min:.0f} min" if stats.median_warmup_min else "–"
     )
+    warm_label = "Medianuppvärmningstid till 80 °C (kylvätska)"
+    if stats.median_oil_warmup_min is not None:
+        warm_txt += f" / {stats.median_oil_warmup_min:.0f} min"
+        warm_label = "Medianuppvärmning kylvätska / olja (80 °C)"
     cells = [
         stat_cell(str(stats.n_trips), "Antal körningar"),
         stat_cell(f"{stats.total_km:,.0f} km".replace(",", " "), "Total sträcka (est.)"),
         stat_cell(f"{stats.total_hours:.1f} h", "Total körtid"),
         stat_cell(clean_txt, "Körningar utan kallstartsöverträdelse"),
         stat_cell(fmt_date(stats.last_driven) if stats.last_driven else "–", "Senast körd"),
-        stat_cell(warm_txt, "Medianuppvärmningstid till 80 °C"),
+        stat_cell(warm_txt, warm_label),
     ]
     stat_table = Table(
         [cells[0:3], cells[3:6]],
@@ -391,8 +406,10 @@ def build_pdf(
         "OBD-II-uttag (motorvarvtal, kylvätsketemperatur, hastighet) utan manuell "
         "inmatning. En körning registreras från motorstart till motorstopp. "
         "Sträckor är uppskattade genom integrering av fordonets hastighetssignal. "
-        "”Kallstartsöverträdelse” avser varvtal över 3 000 r/min innan kylvätskan "
-        "nått 80 °C. Rapporten genererades med Black Box V1.",
+        "”Kallstartsöverträdelse” avser varvtal över 3 000 r/min innan motorn nått "
+        "arbetstemperatur (kylvätska 80 °C; där oljetemperatur registrerats via "
+        "fordonets CAN-buss krävs även olja 80 °C). Rapporten genererades med "
+        "Black Box.",
         STYLES["foot"],
     ))
 

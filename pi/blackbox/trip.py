@@ -25,9 +25,13 @@ class TripSummary:
     duration_s: int
     distance_km_est: float
     warmed_up: bool
-    warmup_s: int | None
+    warmup_s: int | None          # time until fully warm per criterion
+    coolant_warmup_s: int | None  # time until coolant threshold
+    oil_warmup_s: int | None      # time until oil threshold (None without oil data)
+    warm_criterion: str           # "coolant" | "oil_and_coolant"
     max_rpm: int
     max_coolant_c: float | None
+    max_oil_temp_c: float | None
     cold_violation_count: int
     violations: list[ColdViolation] = field(default_factory=list)
 
@@ -43,9 +47,15 @@ class TripSummary:
             "distance_km_est": round(self.distance_km_est, 2),
             "warmed_up": self.warmed_up,
             "warmup_s": self.warmup_s,
+            "coolant_warmup_s": self.coolant_warmup_s,
+            "oil_warmup_s": self.oil_warmup_s,
+            "warm_criterion": self.warm_criterion,
             "max_rpm": self.max_rpm,
             "max_coolant_c": (
                 round(self.max_coolant_c, 1) if self.max_coolant_c is not None else None
+            ),
+            "max_oil_temp_c": (
+                round(self.max_oil_temp_c, 1) if self.max_oil_temp_c is not None else None
             ),
             "cold_violation_count": self.cold_violation_count,
             "source": "pi",
@@ -64,6 +74,9 @@ class TripSummary:
                     round(v.coolant_c_at_start, 1)
                     if v.coolant_c_at_start is not None
                     else None
+                ),
+                "oil_c_at_start": (
+                    round(v.oil_c_at_start, 1) if v.oil_c_at_start is not None else None
                 ),
             }
             for v in self.violations
@@ -89,6 +102,7 @@ class TripRecorder:
         self.distance_km = 0.0
         self.max_rpm = 0
         self.max_coolant_c: float | None = None
+        self.max_oil_temp_c: float | None = None
         self._prev_ts: datetime | None = None
         self._prev_speed_kph: float | None = None
         self.last_sample_at = started_at
@@ -99,9 +113,10 @@ class TripRecorder:
         rpm: float | None,
         coolant_c: float | None,
         speed_kph: float | None,
+        oil_c: float | None = None,
     ) -> None:
         self.last_sample_at = now
-        self.monitor.update(now, coolant_c, rpm)
+        self.monitor.update(now, coolant_c, rpm, oil_c)
 
         if rpm is not None:
             self.max_rpm = max(self.max_rpm, int(rpm))
@@ -110,6 +125,12 @@ class TripRecorder:
                 coolant_c
                 if self.max_coolant_c is None
                 else max(self.max_coolant_c, coolant_c)
+            )
+        if oil_c is not None:
+            self.max_oil_temp_c = (
+                oil_c
+                if self.max_oil_temp_c is None
+                else max(self.max_oil_temp_c, oil_c)
             )
 
         if speed_kph is not None:
@@ -142,8 +163,20 @@ class TripRecorder:
             "distance_km": self.distance_km,
             "max_rpm": self.max_rpm,
             "max_coolant_c": self.max_coolant_c,
+            "max_oil_temp_c": self.max_oil_temp_c,
+            "warm_criterion": self.monitor.criterion,
             "warmed_at": (
                 self.monitor.warmed_at.isoformat() if self.monitor.warmed_at else None
+            ),
+            "coolant_warmed_at": (
+                self.monitor.coolant_warmed_at.isoformat()
+                if self.monitor.coolant_warmed_at
+                else None
+            ),
+            "oil_warmed_at": (
+                self.monitor.oil_warmed_at.isoformat()
+                if self.monitor.oil_warmed_at
+                else None
             ),
             "violations": [
                 {
@@ -152,6 +185,7 @@ class TripRecorder:
                     "ended_at": v.ended_at.isoformat() if v.ended_at else None,
                     "max_rpm": v.max_rpm,
                     "coolant_c_at_start": v.coolant_c_at_start,
+                    "oil_c_at_start": v.oil_c_at_start,
                 }
                 for v in violations
             ],
@@ -159,12 +193,10 @@ class TripRecorder:
 
     def finalize(self, ended_at: datetime) -> TripSummary:
         self.monitor.finish(ended_at)
-        warmed_up = self.monitor.warmed_at is not None
-        warmup_s = (
-            int((self.monitor.warmed_at - self.started_at).total_seconds())
-            if warmed_up
-            else None
-        )
+
+        def since_start(ts: datetime | None) -> int | None:
+            return int((ts - self.started_at).total_seconds()) if ts else None
+
         return TripSummary(
             id=self.id,
             vehicle_id=self.vehicle_id,
@@ -173,10 +205,14 @@ class TripRecorder:
             ended_at=ended_at,
             duration_s=int((ended_at - self.started_at).total_seconds()),
             distance_km_est=self.distance_km,
-            warmed_up=warmed_up,
-            warmup_s=warmup_s,
+            warmed_up=self.monitor.warmed_at is not None,
+            warmup_s=since_start(self.monitor.warmed_at),
+            coolant_warmup_s=since_start(self.monitor.coolant_warmed_at),
+            oil_warmup_s=since_start(self.monitor.oil_warmed_at),
+            warm_criterion=self.monitor.criterion,
             max_rpm=self.max_rpm,
             max_coolant_c=self.max_coolant_c,
+            max_oil_temp_c=self.max_oil_temp_c,
             cold_violation_count=len(self.monitor.completed),
             violations=list(self.monitor.completed),
         )
@@ -194,12 +230,18 @@ def recover_summary(data: dict) -> TripSummary:
             ended_at=datetime.fromisoformat(v["ended_at"]) if v["ended_at"] else ended_at,
             max_rpm=v["max_rpm"],
             coolant_c_at_start=v["coolant_c_at_start"],
+            oil_c_at_start=v.get("oil_c_at_start"),
         )
         for v in data.get("violations", [])
     ]
-    warmed_at = (
-        datetime.fromisoformat(data["warmed_at"]) if data.get("warmed_at") else None
-    )
+
+    def parse_opt(key: str) -> datetime | None:
+        return datetime.fromisoformat(data[key]) if data.get(key) else None
+
+    def since_start(ts: datetime | None) -> int | None:
+        return int((ts - started_at).total_seconds()) if ts else None
+
+    warmed_at = parse_opt("warmed_at")
     return TripSummary(
         id=data["id"],
         vehicle_id=data["vehicle_id"],
@@ -209,9 +251,13 @@ def recover_summary(data: dict) -> TripSummary:
         duration_s=int((ended_at - started_at).total_seconds()),
         distance_km_est=data["distance_km"],
         warmed_up=warmed_at is not None,
-        warmup_s=int((warmed_at - started_at).total_seconds()) if warmed_at else None,
+        warmup_s=since_start(warmed_at),
+        coolant_warmup_s=since_start(parse_opt("coolant_warmed_at")),
+        oil_warmup_s=since_start(parse_opt("oil_warmed_at")),
+        warm_criterion=data.get("warm_criterion", "coolant"),
         max_rpm=data["max_rpm"],
         max_coolant_c=data["max_coolant_c"],
+        max_oil_temp_c=data.get("max_oil_temp_c"),
         cold_violation_count=len(violations),
         violations=violations,
     )

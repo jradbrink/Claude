@@ -22,6 +22,8 @@ class Sample:
     rpm: float | None
     coolant_c: float | None
     speed_kph: float | None
+    oil_c: float | None = None  # only the mock fills this; real oil temp
+    # comes from the CAN listener and is merged in by the daemon
 
 
 class ObdSource:
@@ -99,12 +101,12 @@ class Elm327Source(ObdSource):
 
 
 class MockSource(ObdSource):
-    """Simulated cold start + drive, ~4 minutes: idle warm-up, an early
-    over-rev (triggers a cold violation), coolant reaching 80 °C, then a
-    cruise and engine off."""
+    """Simulated cold start + drive, ~5 minutes: idle warm-up, an early
+    over-rev (triggers a cold violation), coolant reaching 80 °C, the oil
+    lagging behind it (M96-style), then a cruise and engine off."""
 
     def __init__(self, time_scale: float = 10.0) -> None:
-        self.time_scale = time_scale  # 10x = the 4-minute drive takes ~24 s
+        self.time_scale = time_scale  # 10x = the 5-minute drive takes ~30 s
         self._t0: float | None = None
 
     def connect(self) -> bool:
@@ -115,9 +117,10 @@ class MockSource(ObdSource):
     def read(self) -> Sample | None:
         t = (time.monotonic() - self._t0) * self.time_scale
         now = datetime.now(timezone.utc)
-        if t > 240:  # engine off
+        if t > 300:  # engine off
             return None
         coolant = min(92.0, 15.0 + t * 0.45)  # ~80 °C after ~145 s
+        oil = min(95.0, 15.0 + t * 0.28)      # ~80 °C after ~232 s — oil lags
         if t < 20:
             rpm, speed = 1100.0, 0.0  # cold idle
         elif t < 26:
@@ -125,8 +128,8 @@ class MockSource(ObdSource):
         elif t < 150:
             rpm, speed = 2000.0, 40.0  # gentle driving while warming
         else:
-            rpm, speed = 2800.0, 90.0  # warmed up, cruising
-        return Sample(ts=now, rpm=rpm, coolant_c=coolant, speed_kph=speed)
+            rpm, speed = 2800.0, 90.0  # coolant warm, then fully warm, cruising
+        return Sample(ts=now, rpm=rpm, coolant_c=coolant, speed_kph=speed, oil_c=oil)
 
     def close(self) -> None:
         self._t0 = None

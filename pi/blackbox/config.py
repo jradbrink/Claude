@@ -17,9 +17,26 @@ from pathlib import Path
 @dataclass(frozen=True)
 class Thresholds:
     warm_coolant_c: float = 80.0
+    warm_oil_c: float = 80.0
+    # "auto" = require oil when the CAN listener is enabled, else coolant-only.
+    # Explicit values: "coolant" | "oil_and_coolant".
+    warm_criterion: str = "auto"
     cold_rpm_limit: int = 3000
     rpm_hysteresis: int = 300
     violation_end_delay_s: float = 2.0
+
+
+@dataclass(frozen=True)
+class CanConfig:
+    """Oil temp from the internal CAN bus (V1.5). Decode is configurable so a
+    later car (997 etc.) is a config change, not a code change."""
+    enabled: bool = False
+    channel: str = "can0"
+    can_id: int = 0x4E0
+    byte_index: int = 5
+    factor: float = 0.75
+    offset: float = -48.0
+    stale_after_s: float = 10.0
 
 
 @dataclass(frozen=True)
@@ -71,6 +88,7 @@ class AppConfig:
     device_id: str
     thresholds: Thresholds = field(default_factory=Thresholds)
     obd: ObdConfig = field(default_factory=ObdConfig)
+    can: CanConfig = field(default_factory=CanConfig)
     trip: TripConfig = field(default_factory=TripConfig)
     led: LedConfig = field(default_factory=LedConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
@@ -97,11 +115,18 @@ def load_config(path: str | Path) -> AppConfig:
         "SUPABASE_SERVICE_KEY", supa.get("service_key", "")
     )
 
+    thresholds = _section(data, "thresholds", Thresholds)
+    if thresholds.warm_criterion not in ("auto", "coolant", "oil_and_coolant"):
+        raise ValueError(
+            "config: warm_criterion must be 'auto', 'coolant' or 'oil_and_coolant'"
+        )
+
     return AppConfig(
         vehicle_id=vehicle_id,
         device_id=device_id,
-        thresholds=_section(data, "thresholds", Thresholds),
+        thresholds=thresholds,
         obd=_section(data, "obd", ObdConfig),
+        can=_section(data, "can", CanConfig),
         trip=_section(data, "trip", TripConfig),
         led=_section(data, "led", LedConfig),
         storage=_section(data, "storage", StorageConfig),

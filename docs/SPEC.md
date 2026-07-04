@@ -17,14 +17,17 @@ det som står här.
    │                                                                   │
    │  OBD-II-port ──► OBDLink SX (USB, ELM327-kompatibel)              │
    │                        │                                          │
-   │                        ▼                                          │
+   │  CAN-buss (kluster) ──► MCP2515 CAN-HAT, listen-only (V1.5)       │
+   │                        │        │                                 │
+   │                        ▼        ▼                                 │
    │  ┌──────────────── Raspberry Pi (Zero 2 W / 4) ────────────────┐  │
    │  │  blackbox-daemon (Python, systemd)                          │  │
    │  │   • Poller: RPM (010C), kylvätska (0105), hastighet (010D)  │  │
-   │  │   • Tillståndsmaskin: KALL → UPPVÄRMD (latch per körning)   │  │
-   │  │   • Överträdelselogik: RPM > 3000 medan KALL ⇒ händelse     │  │
+   │  │   • CAN-lyssnare: oljetemp (ID 0x4E0, V1.5)                 │  │
+   │  │   • Tillståndsmaskin: KALL → KYLV. VARM → UPPVÄRMD (latch)  │  │
+   │  │   • Överträdelselogik: RPM > 3000 före UPPVÄRMD ⇒ händelse  │  │
    │  │   • Trip-detektering: motor på/av ⇒ körning start/slut      │  │
-   │  │   • RGB-LED via GPIO (röd/grön/blå status)                  │  │
+   │  │   • RGB-LED via GPIO (röd/gul/grön/blå status)              │  │
    │  │   • SQLite-buffert (offline-first, källa för sanning lokalt)│  │
    │  └───────────────┬─────────────────────────────────────────────┘  │
    └──────────────────┼────────────────────────────────────────────────┘
@@ -57,7 +60,8 @@ det som står här.
 |---|---|---|
 | Dator | Raspberry Pi Zero 2 W | Billigast/minst som klarar jobbet; Pi 4 fungerar identiskt för utveckling |
 | OBD-adapter | **OBDLink SX (USB)** | Kabelbunden = inga Bluetooth-parningsproblem, ingen av ELM327-klonernas flakiness, snabb och väldokumenterad med `python-OBD`. BT-kloner (~100 kr) fungerar men är produktens största felkälla. |
-| LED | Gemensam katod RGB-LED + 3×330 Ω på GPIO 17/27/22 | En komponent visar alla tillstånd; enfärgade röd+grön fungerar också (konfigurerbart) |
+| LED | Gemensam katod RGB-LED + 3×330 Ω på GPIO 17/27/22 | En komponent visar alla tillstånd (inkl. gult mellanläge); enfärgade röd+grön fungerar också (konfigurerbart) |
+| CAN (V1.5) | MCP2515 SPI CAN-HAT (~150 kr) | Riktig oljetemp, lyssnad passivt från CAN-paret vid instrumentklustret (listen-only) |
 | Ström | USB-adapter i 12V-uttag **eller** buck-omvandlare från OBD stift 16 | Se beslut B1 — 996:ans OBD-port har konstant 12 V, batteridränering måste hanteras |
 
 **Viktigt om ström (996):** OBD-stift 16 är strömsatt även med avslagen tändning. En Pi
@@ -101,10 +105,14 @@ Fyra tabeller. Fullständig DDL i `supabase/migrations/0001_init.sql`.
 | `started_at` / `ended_at` | `timestamptz` | Motor på / motor av |
 | `duration_s` | `int` | |
 | `distance_km_est` | `numeric(7,2)` | Integrerad ur PID 010D (hastighet), märkt "est." i rapporten |
-| `warmed_up` | `boolean` | Nådde kylvätskan tröskeln under körningen? |
-| `warmup_s` | `int` NULL | Sekunder från start till UPPVÄRMD (NULL om aldrig varm) |
+| `warmed_up` | `boolean` | Nådde motorn UPPVÄRMD (enligt gällande kriterium)? |
+| `warmup_s` | `int` NULL | Sekunder från start till helt UPPVÄRMD (NULL om aldrig varm) |
+| `coolant_warmup_s` | `int` NULL | Sekunder till kylvätsketröskeln |
+| `oil_warmup_s` | `int` NULL | Sekunder till oljetröskeln (NULL utan oljedata) |
+| `warm_criterion` | `text` | `coolant` \| `oil_and_coolant` — kriteriet som faktiskt gällde |
 | `max_rpm` | `int` | |
 | `max_coolant_c` | `numeric(5,1)` | |
+| `max_oil_temp_c` | `numeric(5,1)` NULL | Från CAN-lyssnaren (V1.5) |
 | `cold_violation_count` | `int` NOT NULL DEFAULT 0 | Antal överträdelseepisoder |
 | `source` | `text` DEFAULT 'pi' | Framtidssäkring (manuell import etc.) |
 | `created_at` | `timestamptz` | |
@@ -118,6 +126,7 @@ Fyra tabeller. Fullständig DDL i `supabase/migrations/0001_init.sql`.
 | `duration_s` | `numeric(6,1)` | |
 | `max_rpm` | `int` NOT NULL | Högsta varvtal under episoden |
 | `coolant_c_at_start` | `numeric(5,1)` | Kylvätsketemp när episoden började |
+| `oil_c_at_start` | `numeric(5,1)` NULL | Oljetemp när episoden började (V1.5) |
 
 **Medvetet utelämnat i V1:** rådatasamples (1–2 Hz tidsserie). Rapporten behöver bara
 aggregat per körning, och samples ökar lagring/synkvolym ~1000×. Pi:n behåller dock
@@ -134,26 +143,44 @@ som går förbi RLS. För produkt-skala: byt till per-enhet JWT via Edge Functio
 ### 3.1 Uppvärmningstillstånd (per körning)
 
 ```
-        coolant ≥ warm_coolant_c (default 80 °C)
-KALL ────────────────────────────────────────────► UPPVÄRMD   (latch — återgår aldrig
-  │                                                            under samma körning)
-  └─ LED: röd (fast)                               └─ LED: grön (fast)
+        coolant ≥ warm_coolant_c            olja ≥ warm_oil_c (default 80 °C)
+KALL ─────────────────────────► KYLV. VARM ─────────────────────► UPPVÄRMD
+  │      (default 80 °C)             │                                │
+  └─ LED: röd (fast)                 └─ LED: gul (fast)               └─ LED: grön (fast)
+
+Utan oljedata (V1, eller CAN-avbrott): KALL ──► UPPVÄRMD direkt på kylvätskan.
 ```
 
-Latchen är avsiktlig: termostaten kan få temperaturen att dippa under 80 °C i fartvind,
-men motorn är fortfarande uppvärmd. Nytt trip ⇒ ny tillståndsmaskin.
+Alla latchar är permanenta inom körningen: termostaten kan få temperaturen att dippa
+under 80 °C i fartvind, men motorn är fortfarande uppvärmd. Nytt trip ⇒ ny
+tillståndsmaskin.
+
+**Oljetemperatur (V1.5).** M96:ans olja släpar 10+ minuter efter kylvätskan, och en
+grön lampa på enbart kylvätska vore missvisande för målgruppen. 996.2 exponerar inte
+oljetemp via standard-OBD, men DME:n sänder den på interna CAN-bussen
+(DME ↔ instrumentkluster). Dekodning (community-dokumenterad, **verifieras mot
+Durametric före skarp användning**): CAN-ID `0x4E0`, byte 5, 8 bitar, `fys = råvärde
+× 0,75 − 48`. Hårdvara: MCP2515 SPI CAN-HAT inkopplad på CAN-paret vid
+instrumentklustret, med interfacet i **listen-only-läge** (ACK:ar aldrig, sänder
+aldrig error frames — elektriskt osynlig för bilen; `pi/can0.service` sätter upp
+detta). Kriteriet styrs av `warm_criterion`: `auto` (olja krävs när CAN är aktiv),
+`coolant`, eller `oil_and_coolant`. **Degradering:** om oljedata krävs men aldrig
+setts under körningen (kabelbrott, HAT saknas) faller maskinen tillbaka till
+kylvätskekriteriet så att lampan fortfarande kan bli grön; vilket kriterium som
+faktiskt gällde sparas per körning i `trips.warm_criterion`.
 
 ### 3.2 Överträdelseepisoder
 
 En **episod** (inte ett sample) loggas så här, för att en sekunds rusning inte ska bli
 20 rader vid 2 Hz-polling:
 
-- **Start:** `rpm > cold_rpm_limit` (default 3000) medan tillstånd = KALL.
+- **Start:** `rpm > cold_rpm_limit` (default 3000) innan tillstånd = UPPVÄRMD
+  (dvs. även i KYLV. VARM-fasen — oljan är fortfarande kall).
   LED byter till snabbt blinkande rött.
 - **Under:** `max_rpm` uppdateras löpande.
 - **Slut:** `rpm < cold_rpm_limit − rpm_hysteresis` (default 300) sammanhängande i
-  `violation_end_delay_s` (default 2,0 s), **eller** motorn blir UPPVÄRMD, **eller**
-  körningen tar slut.
+  `violation_end_delay_s` (default 2,0 s), **eller** motorn blir helt UPPVÄRMD,
+  **eller** körningen tar slut.
 - Episoden sparas med starttid, sluttid, varaktighet, max-RPM och kylvätsketemp vid start.
 
 ### 3.3 Trip-detektering (helt automatisk)
@@ -174,7 +201,8 @@ alltid sträckan "uppskattad via OBD".
 |---|---|
 | Väntar på OBD/motor | Blå långsam blink |
 | KALL | Röd fast |
-| KALL + överträdelse pågår | Röd snabb blink |
+| Överträdelse pågår (ej UPPVÄRMD) | Röd snabb blink |
+| KYLVÄTSKA VARM, olja värms (V1.5) | Gul fast |
 | UPPVÄRMD | Grön fast |
 
 ---
@@ -200,7 +228,7 @@ alltid sträckan "uppskattad via OBD".
 |---|---|---|---|
 | **B1** | Strömförsörjning | (a) Tändningsstyrd matning (add-a-fuse/12V-uttag) — enheten är död när bilen står. (b) Konstant ström från OBD-stift 16 + undervoltsvakt — möjliggör framtida "hjärtslag när bilen står" men riskerar batteriet. | **(a)** för V1. Enkelt, säkert, och V1 har inget att göra när motorn är av. |
 | **B2** | OBD-adapter | OBDLink SX USB (~600 kr, robust) vs ELM327 BT-klon (~100 kr, flakig) | **OBDLink SX**. För en betalprodukt är adapterflakiness den dyraste supportkostnaden. |
-| **B3** | Varm-tröskel | 80 °C (kylvätska) är default. M96-puritaner argumenterar för oljetemp, men olje-PID är inte standard-OBD på 996. | Behåll **80 °C kylvätska**, konfigurerbart. Notera i rapporten att tröskeln avser kylvätska. |
+| **B3** | Varm-tröskel | Kylvätska 80 °C (V1) vs kylvätska + olja 80/80 °C via CAN (V1.5). | **Implementerat: bägge.** Med CAN-HAT gäller kylvätska + olja (`warm_criterion = "auto"`); utan oljedata degraderar systemet automatiskt till kylvätska. Kvarstående delbeslut: verifiera CAN-dekodningen mot Durametric och bekräfta bitrate 500 kbit/s på din bil. |
 | **B4** | Moln-autentisering | Service-nyckel på Pi:n (V1, egen enhet) vs per-enhet JWT via Edge Function (produkt) | **Service-nyckel nu**, JWT före första externa kund. Nyckeln ligger i `/etc/blackbox.env` (root-läsbar), inte i repo. |
 | **B5** | PDF-generering | Lokalt Python/ReportLab-skript (V1) vs server-side (Edge Function + Storage, del av månadsavgiften) | **Lokalt skript nu** — noll hosting. Flytta till moln när månadsavgiften ska motiveras. |
 | **B6** | Korta körningar | Kasta < 60 s (default) eller logga allt | **Kasta**, konfigurerbart — garagerangering i rapporten sänker trovärdigheten. |

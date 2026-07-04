@@ -24,6 +24,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .can_source import OilTempCanListener
 from .config import AppConfig, load_config
 from .led import LedMode, StatusLed
 from .obd_source import ObdSource, create_source
@@ -51,6 +52,14 @@ class Daemon:
         if self.sync is None:
             log.warning("Supabase not configured — running local-only")
         self.source: ObdSource = create_source(cfg.obd)
+        self.can_listener: OilTempCanListener | None = None
+        if cfg.can.enabled:
+            self.can_listener = OilTempCanListener(cfg.can)
+            self.can_listener.start()
+        self.require_oil = cfg.thresholds.warm_criterion == "oil_and_coolant" or (
+            cfg.thresholds.warm_criterion == "auto"
+            and (cfg.can.enabled or cfg.obd.mock)
+        )
         self.journal_path = Path(cfg.storage.db_path).parent / "active_trip.json"
         self.stop_requested = False
         self._last_sync_attempt = 0.0
@@ -99,6 +108,8 @@ class Daemon:
             self.led.set_mode(LedMode.COLD_VIOLATION)
         elif monitor.state is EngineState.WARM:
             self.led.set_mode(LedMode.WARM)
+        elif monitor.state is EngineState.COOLANT_WARM:
+            self.led.set_mode(LedMode.WARMING_OIL)
         else:
             self.led.set_mode(LedMode.COLD)
 
@@ -154,6 +165,8 @@ class Daemon:
                         cold_rpm_limit=self.cfg.thresholds.cold_rpm_limit,
                         rpm_hysteresis=self.cfg.thresholds.rpm_hysteresis,
                         violation_end_delay_s=self.cfg.thresholds.violation_end_delay_s,
+                        warm_oil_c=self.cfg.thresholds.warm_oil_c,
+                        require_oil=self.require_oil,
                     )
                     trip = TripRecorder(
                         vehicle_id=self.cfg.vehicle_id,
@@ -169,7 +182,12 @@ class Daemon:
                     self.maybe_sync()
 
             if trip is not None:
-                trip.add_sample(sample.ts, sample.rpm, sample.coolant_c, sample.speed_kph)
+                oil_c = sample.oil_c
+                if oil_c is None and self.can_listener is not None:
+                    oil_c = self.can_listener.oil_temp_c
+                trip.add_sample(
+                    sample.ts, sample.rpm, sample.coolant_c, sample.speed_kph, oil_c
+                )
                 self.led_for_trip(trip.monitor)
                 self.write_journal(trip)
 
@@ -204,6 +222,8 @@ class Daemon:
                 self.source.close()
         finally:
             self.source.close()
+            if self.can_listener is not None:
+                self.can_listener.close()
             self.led.set_mode(LedMode.OFF)
             self.led.close()
             self.storage.close()

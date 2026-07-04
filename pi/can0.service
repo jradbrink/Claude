@@ -1,0 +1,16 @@
+[Unit]
+Description=Bring up can0 in listen-only mode for Black Box oil temp
+Before=blackbox.service
+BindsTo=sys-subsystem-net-devices-can0.device
+After=sys-subsystem-net-devices-can0.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Listen-only: the controller never ACKs and never sends error frames,
+# so it is electrically invisible to the car's CAN bus.
+ExecStart=/sbin/ip link set can0 up type can bitrate 500000 listen-only on
+ExecStop=/sbin/ip link set can0 down
+
+[Install]
+WantedBy=multi-user.target

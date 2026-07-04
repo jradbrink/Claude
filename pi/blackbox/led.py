@@ -8,6 +8,7 @@ Modes:
     WAITING        blue slow blink   (no ECU / engine off)
     COLD           solid red
     COLD_VIOLATION fast red blink
+    WARMING_OIL    solid amber       (coolant warm, oil still below threshold)
     WARM           solid green
 """
 
@@ -21,6 +22,7 @@ log = logging.getLogger(__name__)
 RED = (1, 0, 0)
 GREEN = (0, 1, 0)
 BLUE = (0, 0, 1)
+AMBER = (1, 0.45, 0)
 
 
 class LedMode(Enum):
@@ -28,6 +30,7 @@ class LedMode(Enum):
     WAITING = "waiting"
     COLD = "cold"
     COLD_VIOLATION = "cold_violation"
+    WARMING_OIL = "warming_oil"
     WARM = "warm"
 
 
@@ -59,6 +62,8 @@ class StatusLed:
             self._led.color = RED
         elif mode is LedMode.COLD_VIOLATION:
             self._led.blink(on_time=0.15, off_time=0.15, on_color=RED, background=True)
+        elif mode is LedMode.WARMING_OIL:
+            self._led.color = AMBER
         elif mode is LedMode.WARM:
             self._led.color = GREEN
 

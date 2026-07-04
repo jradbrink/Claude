@@ -51,7 +51,32 @@ med 330 Ω-motstånd på BCM 17 (röd), 27 (grön), 22 (blå) + GND.
 | Blå långsam blink | Väntar på motor/ECU |
 | Röd fast | Motorn är kall — håll under 3 000 r/min |
 | Röd snabb blink | Överträdelse pågår (loggas) |
+| Gul fast | Kylvätskan varm, oljan värms fortfarande (kräver CAN-tillägget) |
 | Grön fast | Uppvärmd |
+
+## V1.5: riktig oljetemperatur via CAN
+
+996.2 exponerar inte oljetemp via standard-OBD, men DME:n sänder den på bilens
+interna CAN-buss. Med en MCP2515-baserad CAN-HAT läser daemonen den passivt
+(listen-only — Pi:n ACK:ar aldrig och är elektriskt osynlig för bilen) och
+"uppvärmd" kräver då både kylvätska ≥ 80 °C och olja ≥ 80 °C.
+
+1. Montera CAN-HAT:en och aktivera den i `/boot/firmware/config.txt` enligt
+   HAT-tillverkarens anvisning (t.ex.
+   `dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=25` — oscillatorvärdet
+   varierar mellan HAT:ar).
+2. Koppla HAT:ens CAN-H/CAN-L till CAN-paret på instrumentklustrets kontakt
+   (tvinnat par). Aktivera inte HAT:ens termineringsmotstånd — bussen är redan
+   terminerad i bilen.
+3. `install.sh` installerar `can0.service` som sätter upp interfacet i
+   listen-only-läge med 500 kbit/s (justera bitrate i `can0.service` om din
+   buss kör annat).
+4. Verifiera dekodningen innan du litar på den: kör `candump can0 | grep 4E0`
+   med varm motor och jämför `byte5 * 0.75 - 48` mot en Durametric-avläsning.
+5. Sätt `enabled = true` under `[can]` i `/etc/blackbox.toml`.
+
+Om CAN-datan uteblir (kabelbrott, HAT saknas) degraderar daemonen automatiskt
+till kylvätskekriteriet och loggar vilket kriterium som gällde per körning.
 
 ## Ägarrapport
 

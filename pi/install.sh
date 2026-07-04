@@ -31,10 +31,14 @@ if [[ ! -f /etc/blackbox.env ]]; then
   echo "    Created /etc/blackbox.env — EDIT Supabase credentials."
 fi
 
-echo "==> systemd service"
+echo "==> systemd services"
 cp blackbox.service /etc/systemd/system/blackbox.service
+cp can0.service /etc/systemd/system/can0.service
 systemctl daemon-reload
 systemctl enable blackbox.service
+# can0.service only matters with a CAN HAT ([can] enabled = true); it binds
+# to the can0 device and is inert without one.
+systemctl enable can0.service
 
 echo
 echo "Done. Edit /etc/blackbox.toml and /etc/blackbox.env, then:"

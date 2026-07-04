@@ -22,6 +22,7 @@ Kopplingar och pinnar refererar till `docs/SPEC.md` och `pi/config.example.toml`
 | 6 | DC-DC-omvandlare 12 V → 5 V, ≥3 A | Gärna 9–36 V ingång med transientskydd, USB- eller skruvutgång | 100–150 | Biltema, Amazon.se, Electrokit | Bilelnät spikar vid start — snåla inte här. |
 | 7 | Kablage + kontaktdon | 1,5 mm² kabel, flatstiftshylsor, ringkabelsko (jord), krympslang | 80 | Biltema | Jorda mot karossskruv nära monteringen. |
 | — | *Enklare alternativ:* USB-laddare i 12 V-uttaget | | 100 | | **Endast om uttaget är tändningsstyrt** — på 996 är cigguttaget normalt konstantmatat: mät innan du väljer denna väg, annars dräneras batteriet. |
+| — | *Valbart (uppkoppling):* USB 4G-dongel + data-SIM | Huawei E3372 el. motsv. + IoT/kontantkorts-SIM | 300–500 + ~20/mån | Kjell, Amazon.se; SIM: Comviq/Vimla/Telia | Utan WiFi i garaget är grundplanen mobilens hotspot (gratis, se README). Dongeln gör synk/push helt automatisk — samma modell som garagekameran. |
 
 **Delsumma B: ca 250–350 kr**
 

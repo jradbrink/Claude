@@ -71,9 +71,34 @@ Exempel: *"Körning klar ✔ — 42 min, 38.2 km (est), uppvärmd efter 23 min
 (kylvätska 14, olja 23), max 4200 rpm, inga kallstartsöverträdelser"*.
 Körningar med överträdelse skickas med hög prioritet.
 
-OBS: Pi:n har bara nät i garaget (WiFi). Med tändningsstyrd ström skickas
-sammanfattningen därför oftast vid **nästa** motorstart (journalåterställning) —
-pushen är en sammanfattningskanal, realtidsvarningen i bilen är buzzern.
+Notiser köas beständigt på disk (`push_queue.json`) och skickas i ordning så
+fort nät finns — de överlever strömavbrott och tappas aldrig.
+
+## Internet via mobilens hotspot
+
+Utan WiFi i garaget använder Pi:n telefonens delade internet. Timingen fungerar
+naturligt: Pi:n är bara vaken när tändningen är på — dvs. när du och telefonen
+är i bilen. Daemonen synkar och tömmer push-kön i bakgrunden **även under
+pågående körning**, så förra körningens data och notiser går iväg någon minut
+in i nästa körning.
+
+Lägg in hotspoten på Pi:n (Raspberry Pi OS Bookworm, NetworkManager):
+
+```bash
+sudo nmcli connection add type wifi con-name hotspot ifname wlan0     ssid "DinIphoneHotspot" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "lösenord"     connection.autoconnect yes connection.autoconnect-priority 10
+# hemma-WiFi kan ligga kvar med lägre prioritet — NetworkManager tar det som finns
+```
+
+Plattformsnoter:
+
+- **iPhone:** hotspoten annonseras inte alltid när skärmen är låst och
+  "Tillåt andra att ansluta" är av — slå på hotspoten när du sätter dig i
+  bilen, eller låt "Maximera kompatibilitet" vara på. Pi:n återansluter själv
+  inom ~30 s när hotspoten syns.
+- **Android:** hotspot kan oftast stå på permanent (stäng av "inaktivera
+  hotspot automatiskt" om telefonen har det).
+- **Helt automatiskt alternativ:** USB 4G-dongel med eget data-SIM (som
+  garagekameran) — noll handpåläggning, se inköpslistan.
 
 ## V1.5: riktig oljetemperatur via CAN
 

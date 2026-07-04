@@ -31,7 +31,7 @@ det som står här.
    │  │   • SQLite-buffert (offline-first, källa för sanning lokalt)│  │
    │  └───────────────┬─────────────────────────────────────────────┘  │
    └──────────────────┼────────────────────────────────────────────────┘
-                      │  WiFi (garage) — synk när nät finns
+                      │  Mobil-hotspot under körning / ev. 4G-dongel — synk när nät finns
                       ▼
         Supabase (Postgres + PostgREST)
          • vehicles, devices, trips, cold_events
@@ -43,14 +43,15 @@ det som står här.
 
 ### Designprinciper
 
-1. **Offline-first.** Bilen har inte nät. Allt skrivs först till SQLite på Pi:n;
-   synk till Supabase sker opportunistiskt (direkt efter avslutad körning om nät finns,
-   annars nästa gång Pi:n har uppkoppling, t.ex. hemma i garaget). Ingen data går
-   förlorad av att molnet är onåbart.
+1. **Offline-first.** Nät är undantaget, inte regeln: garaget saknar WiFi och
+   uppkopplingen är mobilens hotspot (finns bara under körning) eller en 4G-dongel.
+   Allt skrivs först till SQLite på Pi:n; synk + push-kö töms av en bakgrundstråd så
+   fort nät finns — även mitt under körning. Ingen data eller notis går förlorad av
+   att molnet är onåbart eller strömmen bryts.
 2. **All säkerhetskritisk logik körs lokalt.** Ljudsignalen och kallstartslogiken är
-   oberoende av nätverk och moln — de fungerar identiskt i ett garage utan täckning.
-   Telefonpushen är en sammanfattningskanal, aldrig realtidsvarning (bilen saknar nät
-   under körning).
+   oberoende av nätverk och moln — de fungerar identiskt utan täckning eller hotspot.
+   Telefonpushen är en sammanfattningskanal, aldrig realtidsvarning: den får aldrig
+   bli något föraren litar på i stunden.
 3. **Molnet är för lagring och rapporter**, inte för realtid. Supabase är systemets
    arkiv; Pi:n är sensorn.
 4. **Klientgenererade UUID:er** för trips/events gör synken idempotent (upsert på id) —
@@ -222,8 +223,11 @@ röd = KALL, röd snabb blink = överträdelse, gul = KYLV. VARM, grön = UPPVÄ
 
 ## 4. Synk och rapport
 
-- **Synk:** efter varje avslutad körning, samt periodiskt (`sync_interval_s`, 300 s) när
-  daemonen väntar på motorn. Upsert (`Prefer: resolution=merge-duplicates`,
+- **Synk:** i bakgrundstråd (blockerar aldrig 2 Hz-pollingen): periodiskt under
+  pågående körning (`sync_interval_s`, 300 s — hotspot-fallet), direkt efter avslutad
+  körning, och medan daemonen väntar på motorn. Telefonnotiser går via en beständig
+  kö (`push_queue.json`) som töms i samma tråd — at-least-once, i ordning, överlever
+  strömavbrott. Upsert (`Prefer: resolution=merge-duplicates`,
   `on_conflict=id`) av trips först, sedan cold_events (FK-ordning). Rader markeras
   `synced` i SQLite först efter 2xx-svar. `devices.last_seen_at` uppdateras som hälsopuls.
 - **Rapport:** `report/generate_report.py` läser Supabase (eller Pi:ns SQLite direkt med
@@ -245,6 +249,7 @@ röd = KALL, röd snabb blink = överträdelse, gul = KYLV. VARM, grön = UPPVÄ
 | **B4** | Moln-autentisering | Service-nyckel på Pi:n (V1, egen enhet) vs per-enhet JWT via Edge Function (produkt) | **Service-nyckel nu**, JWT före första externa kund. Nyckeln ligger i `/etc/blackbox.env` (root-läsbar), inte i repo. |
 | **B5** | PDF-generering | Lokalt Python/ReportLab-skript (V1) vs server-side (Edge Function + Storage, del av månadsavgiften) | **Lokalt skript nu** — noll hosting. Flytta till moln när månadsavgiften ska motiveras. |
 | **B6** | Korta körningar | Kasta < 60 s (default) eller logga allt | **Kasta**, konfigurerbart — garagerangering i rapporten sänker trovärdigheten. |
+| **B7** | Uppkoppling | (a) Mobilens hotspot — gratis, men på iPhone ofta ett handgrepp per körning. (b) USB 4G-dongel + data-SIM (~300–500 kr + ~20 kr/mån) — helt automatiskt, och rätt modell för en produkt. | **(a) nu** (koden är byggd för intermittent nät), **(b)** när handgreppet börjar irritera eller för produktspåret. |
 
 ## 6. Utanför scope (bekräftat)
 

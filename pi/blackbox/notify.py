@@ -14,7 +14,11 @@ is the buzzer's job.
 
 from __future__ import annotations
 
+import json
 import logging
+import threading
+from pathlib import Path
+from typing import Callable
 
 import requests
 
@@ -69,12 +73,11 @@ class Notifier:
         self.url = f"{cfg.ntfy_url.rstrip('/')}/{cfg.topic}"
         self.timeout = cfg.timeout_s
 
-    def trip_summary(self, summary: TripSummary, recovered: bool = False) -> None:
-        """Best-effort: no network (car away from the garage) is normal and
-        never an error — the data is safe in SQLite/Supabase regardless."""
-        msg = format_trip_message(summary, recovered)
+    def send(self, msg: dict) -> bool:
+        """One ntfy message. False on any failure — offline is the normal
+        case in the car, never an error; the queue retries later."""
         try:
-            requests.post(
+            resp = requests.post(
                 self.url,
                 data=msg["body"].encode("utf-8"),
                 headers={
@@ -84,6 +87,55 @@ class Notifier:
                 },
                 timeout=self.timeout,
             )
-            log.info("Pushed trip summary to phone")
+            if resp.status_code >= 300:
+                log.info("Push rejected: HTTP %d", resp.status_code)
+                return False
+            log.info("Pushed to phone: %s", msg["title"])
+            return True
         except requests.RequestException as exc:
-            log.info("No push sent (offline is normal in the car): %s", exc)
+            log.debug("No push sent (offline): %s", exc)
+            return False
+
+
+class PushQueue:
+    """Persistent at-least-once queue for phone notifications.
+
+    Network appears and disappears (phone hotspot during drives, power cut
+    at ignition off), so pushes are queued to disk and drained whenever the
+    sync worker runs. A trip's notification survives any number of power
+    cuts and goes out the first time the Pi is online, in order.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self._lock = threading.Lock()
+
+    def _load(self) -> list[dict]:
+        try:
+            return json.loads(self.path.read_text())
+        except (FileNotFoundError, ValueError):
+            return []
+
+    def _save(self, items: list[dict]) -> None:
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(items))
+        tmp.replace(self.path)
+
+    def add(self, msg: dict) -> None:
+        with self._lock:
+            items = self._load()
+            items.append(msg)
+            self._save(items)
+
+    def drain(self, send: Callable[[dict], bool]) -> int:
+        """Send queued messages in order; stop at the first failure (if one
+        fails, the rest will too). Returns how many were sent."""
+        with self._lock:
+            items = self._load()
+            sent = 0
+            while items and send(items[0]):
+                items.pop(0)
+                sent += 1
+            if sent:
+                self._save(items)
+        return sent

@@ -20,6 +20,7 @@ import json
 import logging
 import signal
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,7 +29,7 @@ from .buzzer import StatusBuzzer
 from .can_source import OilTempCanListener
 from .config import AppConfig, load_config
 from .led import LedMode, StatusLed
-from .notify import Notifier
+from .notify import Notifier, PushQueue, format_trip_message
 from .obd_source import ObdSource, create_source
 from .state import ColdStartMonitor, EngineState
 from .storage import Storage
@@ -64,11 +65,16 @@ class Daemon:
             cfg.thresholds.warm_criterion == "auto"
             and (cfg.can.enabled or cfg.obd.mock)
         )
-        self.journal_path = Path(cfg.storage.db_path).parent / "active_trip.json"
+        state_dir = Path(cfg.storage.db_path).parent
+        self.journal_path = state_dir / "active_trip.json"
+        self.push_queue = PushQueue(state_dir / "push_queue.json")
         self.stop_requested = False
-        self._last_sync_attempt = 0.0
+        # -inf so the first opportunity syncs immediately (monotonic starts
+        # near zero on a fresh boot, which would otherwise delay it).
+        self._last_sync_attempt = float("-inf")
         self._last_journal_write = 0.0
         self._prev_engine_state = EngineState.COLD
+        self._sync_thread: threading.Thread | None = None
 
     # -- crash recovery -----------------------------------------------------
 
@@ -90,23 +96,40 @@ class Daemon:
                 "Recovered trip %s from journal (%ds, %.1f km)",
                 summary.id, summary.duration_s, summary.distance_km_est,
             )
-            if self.notifier is not None:
-                self.notifier.trip_summary(summary, recovered=True)
+            self.queue_push(summary, recovered=True)
         else:
             log.info("Recovered journal trip shorter than %ss — discarded",
                      self.cfg.trip.min_trip_duration_s)
         self.journal_path.unlink(missing_ok=True)
 
-    # -- sync ---------------------------------------------------------------
+    # -- sync & push (background thread; network comes and goes) ------------
+
+    def queue_push(self, summary, recovered: bool = False) -> None:
+        if self.notifier is not None:
+            self.push_queue.add(format_trip_message(summary, recovered))
+
+    def _sync_worker(self) -> None:
+        if self.sync is not None:
+            self.sync.sync_once()
+        if self.notifier is not None:
+            self.push_queue.drain(self.notifier.send)
 
     def maybe_sync(self, force: bool = False) -> None:
-        if self.sync is None:
+        """Kick the background sync/push worker. Never blocks the poll loop:
+        with phone-hotspot connectivity the network is only there DURING the
+        drive, so this also runs while a trip is active."""
+        if self.sync is None and self.notifier is None:
             return
         now = time.monotonic()
         if not force and now - self._last_sync_attempt < self.cfg.supabase.sync_interval_s:
             return
+        if self._sync_thread is not None and self._sync_thread.is_alive():
+            return
         self._last_sync_attempt = now
-        self.sync.sync_once()
+        self._sync_thread = threading.Thread(
+            target=self._sync_worker, name="sync", daemon=True
+        )
+        self._sync_thread.start()
 
     # -- trip loop ----------------------------------------------------------
 
@@ -149,9 +172,8 @@ class Daemon:
                 summary.duration_s, summary.distance_km_est, summary.max_rpm,
                 summary.warmed_up, summary.cold_violation_count,
             )
+            self.queue_push(summary)
             self.maybe_sync(force=True)
-            if self.notifier is not None:
-                self.notifier.trip_summary(summary)
         else:
             log.info("Trip shorter than %ss — discarded", self.cfg.trip.min_trip_duration_s)
         self.buzzer.set_violation(False)
@@ -212,6 +234,7 @@ class Daemon:
                 )
                 self.indicate_for_trip(trip.monitor)
                 self.write_journal(trip)
+                self.maybe_sync()  # hotspot case: network exists mid-drive
 
                 if sample.rpm is None or sample.rpm < tcfg.engine_off_rpm:
                     if engine_off_since is None:

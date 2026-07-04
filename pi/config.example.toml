@@ -42,8 +42,27 @@ disconnect_end_s = 45.0      # or when the ECU stops answering for this long
 min_trip_duration_s = 60.0   # shorter "trips" (key cycles) are discarded
 max_integration_dt_s = 5.0   # cap dt in distance integration (no phantom km)
 
-[led]
+[buzzer]
+# Primary in-car indicator: active 5 V buzzer module on a GPIO pin.
+# Signals: rapid beeping while a cold violation is in progress,
+# two short beeps when the engine is fully warmed up.
 enabled = true
+pin = 18                     # BCM numbering
+chime_on_warm = true         # two beeps at "fully warm"
+chime_on_coolant_warm = false# one beep at the intermediate stage (V1.5)
+
+[notify]
+# Push a trip summary to your phone via ntfy (install the ntfy app and
+# subscribe to the same topic). The topic name is the only secret — make it
+# long and random. Empty topic = disabled. NOTE: sent when the Pi has
+# network (garage WiFi); with ignition-switched power the summary for a
+# drive typically arrives on the next engine start (journal recovery).
+ntfy_url = "https://ntfy.sh"
+topic = ""
+timeout_s = 5.0
+
+[led]
+enabled = false              # optional now that the buzzer is the indicator
 red_pin = 17                 # BCM numbering, common-cathode RGB LED
 green_pin = 27
 blue_pin = 22

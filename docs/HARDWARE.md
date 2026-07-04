@@ -25,15 +25,17 @@ Kopplingar och pinnar refererar till `docs/SPEC.md` och `pi/config.example.toml`
 
 **Delsumma B: ca 250–350 kr**
 
-## C. LED-indikator
+## C. Förarindikator (ljud)
 
 | # | Komponent | Spec / exempel | Ca-pris | Var | Notering |
 |---|---|---|---|---|---|
-| 8 | RGB-LED 5 mm, **gemensam katod**, diffus | | 10 | Electrokit | Diffus lins syns bättre i solljus. Koden antar gemensam katod. |
-| 9 | Motstånd 330 Ω × 3 | | 10 | Electrokit | Ett per färgben (BCM 17/27/22, se config). |
-| 10 | Dupont-kablar hona–hona + LED-panelhållare 5 mm | | 40 | Electrokit, Kjell | Hållaren ger snygg montering i kapsling/panel. |
+| 8 | **Aktiv buzzermodul 5 V**, 3-pin (VCC/GND/SIG) | t.ex. KY-012 eller motsv. modul | 25 | Electrokit, Kjell | "Aktiv" = inbyggd oscillator, styrs hög/låg från GPIO 18. Köp inte passiv piezo (kräver PWM-drivning och låter svagare). |
+| 9 | Dupont-kablar hona–hona | | 20 | Electrokit | Buzzern kan sitta kvar inne i lådan — ljud tar sig igenom panelen. |
+| — | *Valbart:* RGB-LED 5 mm gemensam katod + 3×330 Ω + panelhållare | | 60 | Electrokit | Endast om du vill ha visuell status som komplement (`[led] enabled = true`). |
 
-**Delsumma C: ca 60 kr**
+**Delsumma C: ca 45 kr (105 kr med valbar LED)**
+
+> Telefonpushen (ntfy) kräver ingen hårdvara alls — bara appen på telefonen.
 
 ## D. CAN-tillägget för riktig oljetemp (V1.5)
 

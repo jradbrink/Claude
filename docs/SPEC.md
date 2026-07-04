@@ -27,7 +27,7 @@ det som står här.
    │  │   • Tillståndsmaskin: KALL → KYLV. VARM → UPPVÄRMD (latch)  │  │
    │  │   • Överträdelselogik: RPM > 3000 före UPPVÄRMD ⇒ händelse  │  │
    │  │   • Trip-detektering: motor på/av ⇒ körning start/slut      │  │
-   │  │   • RGB-LED via GPIO (röd/gul/grön/blå status)              │  │
+   │  │   • Buzzer via GPIO (varningspip/klar-signal); LED valbar   │  │
    │  │   • SQLite-buffert (offline-first, källa för sanning lokalt)│  │
    │  └───────────────┬─────────────────────────────────────────────┘  │
    └──────────────────┼────────────────────────────────────────────────┘
@@ -47,8 +47,10 @@ det som står här.
    synk till Supabase sker opportunistiskt (direkt efter avslutad körning om nät finns,
    annars nästa gång Pi:n har uppkoppling, t.ex. hemma i garaget). Ingen data går
    förlorad av att molnet är onåbart.
-2. **All säkerhetskritisk logik körs lokalt.** LED:n och kallstartslogiken är oberoende
-   av nätverk och moln — de fungerar identiskt i ett garage utan täckning.
+2. **All säkerhetskritisk logik körs lokalt.** Ljudsignalen och kallstartslogiken är
+   oberoende av nätverk och moln — de fungerar identiskt i ett garage utan täckning.
+   Telefonpushen är en sammanfattningskanal, aldrig realtidsvarning (bilen saknar nät
+   under körning).
 3. **Molnet är för lagring och rapporter**, inte för realtid. Supabase är systemets
    arkiv; Pi:n är sensorn.
 4. **Klientgenererade UUID:er** för trips/events gör synken idempotent (upsert på id) —
@@ -60,7 +62,8 @@ det som står här.
 |---|---|---|
 | Dator | Raspberry Pi Zero 2 W | Billigast/minst som klarar jobbet; Pi 4 fungerar identiskt för utveckling |
 | OBD-adapter | **OBDLink SX (USB)** | Kabelbunden = inga Bluetooth-parningsproblem, ingen av ELM327-klonernas flakiness, snabb och väldokumenterad med `python-OBD`. BT-kloner (~100 kr) fungerar men är produktens största felkälla. |
-| LED | Gemensam katod RGB-LED + 3×330 Ω på GPIO 17/27/22 | En komponent visar alla tillstånd (inkl. gult mellanläge); enfärgade röd+grön fungerar också (konfigurerbart) |
+| Buzzer | Aktiv 5 V buzzermodul (3-pin) på GPIO 18 | Primär förarindikator: händelseljud i stället för statuslampa — inget ingrepp i inredningen |
+| LED (valbar) | Gemensam katod RGB-LED + 3×330 Ω på GPIO 17/27/22 | Alternativ/komplement för den som vill ha visuell status (default av) |
 | CAN (V1.5) | MCP2515 SPI CAN-HAT (~150 kr) | Riktig oljetemp, lyssnad passivt från CAN-paret vid instrumentklustret (listen-only) |
 | Ström | USB-adapter i 12V-uttag **eller** buck-omvandlare från OBD stift 16 | Se beslut B1 — 996:ans OBD-port har konstant 12 V, batteridränering måste hanteras |
 
@@ -195,15 +198,25 @@ Sträcka uppskattas som trapetsintegral av PID 010D (km/h) över sampeltid, med 
 kapat till 5 s så att sampel-luckor inte skapar fantomkilometer. Rapporten märker
 alltid sträckan "uppskattad via OBD".
 
-### 3.4 LED-tillstånd
+### 3.4 Förarsignaler
 
-| Läge | LED |
+Primär indikator är **ljud** (aktiv buzzer, GPIO 18) — händelsestyrd i stället
+för konstant lampa: hörs utan att blicken flyttas och kräver inget synligt
+ingrepp i inredningen.
+
+| Ljud | Händelse |
 |---|---|
-| Väntar på OBD/motor | Blå långsam blink |
-| KALL | Röd fast |
-| Överträdelse pågår (ej UPPVÄRMD) | Röd snabb blink |
-| KYLVÄTSKA VARM, olja värms (V1.5) | Gul fast |
-| UPPVÄRMD | Grön fast |
+| Snabbt ihållande pipande | Överträdelseepisod pågår (slutar när varvet släpps) |
+| Två korta pip | Motorn helt UPPVÄRMD |
+| Ett kort pip (valbart, default av) | KYLVÄTSKA VARM-fasen nådd (V1.5) |
+
+**Push till telefon** (ntfy, valbar): sammanfattning per körning (varaktighet,
+sträcka, uppvärmningstider, max-rpm, överträdelser) med hög prioritet vid
+överträdelse. Skickas när nät finns — med tändningsstyrd ström i praktiken vid
+nästa motorstart via journalåterställningen; realtid i bilen är buzzerns jobb.
+
+**RGB-LED** stöds fortfarande (`[led]`, default av): blå blink = väntar,
+röd = KALL, röd snabb blink = överträdelse, gul = KYLV. VARM, grön = UPPVÄRMD.
 
 ---
 

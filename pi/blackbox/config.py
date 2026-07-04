@@ -59,10 +59,30 @@ class TripConfig:
 
 @dataclass(frozen=True)
 class LedConfig:
-    enabled: bool = True
+    enabled: bool = False  # optional since the buzzer became the primary indicator
     red_pin: int = 17
     green_pin: int = 27
     blue_pin: int = 22
+
+
+@dataclass(frozen=True)
+class BuzzerConfig:
+    enabled: bool = True
+    pin: int = 18
+    chime_on_warm: bool = True          # two beeps when fully warmed up
+    chime_on_coolant_warm: bool = False # one beep at the intermediate stage
+
+
+@dataclass(frozen=True)
+class NotifyConfig:
+    """Push to phone via ntfy. Enabled when topic is set."""
+    ntfy_url: str = "https://ntfy.sh"
+    topic: str = ""
+    timeout_s: float = 5.0
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.topic)
 
 
 @dataclass(frozen=True)
@@ -91,6 +111,8 @@ class AppConfig:
     can: CanConfig = field(default_factory=CanConfig)
     trip: TripConfig = field(default_factory=TripConfig)
     led: LedConfig = field(default_factory=LedConfig)
+    buzzer: BuzzerConfig = field(default_factory=BuzzerConfig)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     supabase: SupabaseConfig = field(default_factory=SupabaseConfig)
 
@@ -129,6 +151,8 @@ def load_config(path: str | Path) -> AppConfig:
         can=_section(data, "can", CanConfig),
         trip=_section(data, "trip", TripConfig),
         led=_section(data, "led", LedConfig),
+        buzzer=_section(data, "buzzer", BuzzerConfig),
+        notify=_section(data, "notify", NotifyConfig),
         storage=_section(data, "storage", StorageConfig),
         supabase=SupabaseConfig(**supa),
     )

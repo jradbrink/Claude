@@ -24,9 +24,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .buzzer import StatusBuzzer
 from .can_source import OilTempCanListener
 from .config import AppConfig, load_config
 from .led import LedMode, StatusLed
+from .notify import Notifier
 from .obd_source import ObdSource, create_source
 from .state import ColdStartMonitor, EngineState
 from .storage import Storage
@@ -43,6 +45,8 @@ class Daemon:
     def __init__(self, cfg: AppConfig) -> None:
         self.cfg = cfg
         self.led = StatusLed(cfg.led)
+        self.buzzer = StatusBuzzer(cfg.buzzer)
+        self.notifier = Notifier(cfg.notify) if cfg.notify.enabled else None
         self.storage = Storage(cfg.storage.db_path)
         self.sync = (
             SupabaseSync(cfg.supabase, self.storage, cfg.device_id)
@@ -64,6 +68,7 @@ class Daemon:
         self.stop_requested = False
         self._last_sync_attempt = 0.0
         self._last_journal_write = 0.0
+        self._prev_engine_state = EngineState.COLD
 
     # -- crash recovery -----------------------------------------------------
 
@@ -85,6 +90,8 @@ class Daemon:
                 "Recovered trip %s from journal (%ds, %.1f km)",
                 summary.id, summary.duration_s, summary.distance_km_est,
             )
+            if self.notifier is not None:
+                self.notifier.trip_summary(summary, recovered=True)
         else:
             log.info("Recovered journal trip shorter than %ss — discarded",
                      self.cfg.trip.min_trip_duration_s)
@@ -103,7 +110,18 @@ class Daemon:
 
     # -- trip loop ----------------------------------------------------------
 
-    def led_for_trip(self, monitor: ColdStartMonitor) -> None:
+    def indicate_for_trip(self, monitor: ColdStartMonitor) -> None:
+        # Buzzer: urgent beeps track the violation, chimes fire on the
+        # warm-up transitions (edge-detected).
+        self.buzzer.set_violation(monitor.violation_active)
+        if monitor.state is not self._prev_engine_state:
+            if monitor.state is EngineState.COOLANT_WARM:
+                self.buzzer.chime_coolant_warm()
+            elif monitor.state is EngineState.WARM:
+                self.buzzer.chime_warm()
+            self._prev_engine_state = monitor.state
+
+        # LED: optional, disabled by default since the buzzer took over.
         if monitor.violation_active:
             self.led.set_mode(LedMode.COLD_VIOLATION)
         elif monitor.state is EngineState.WARM:
@@ -132,8 +150,11 @@ class Daemon:
                 summary.warmed_up, summary.cold_violation_count,
             )
             self.maybe_sync(force=True)
+            if self.notifier is not None:
+                self.notifier.trip_summary(summary)
         else:
             log.info("Trip shorter than %ss — discarded", self.cfg.trip.min_trip_duration_s)
+        self.buzzer.set_violation(False)
         self.journal_path.unlink(missing_ok=True)
 
     def run_connected(self) -> None:
@@ -176,6 +197,7 @@ class Daemon:
                         max_integration_dt_s=tcfg.max_integration_dt_s,
                     )
                     engine_off_since = None
+                    self._prev_engine_state = EngineState.COLD
                     log.info("Trip started (%s)", trip.id)
                 else:
                     self.led.set_mode(LedMode.WAITING)
@@ -188,7 +210,7 @@ class Daemon:
                 trip.add_sample(
                     sample.ts, sample.rpm, sample.coolant_c, sample.speed_kph, oil_c
                 )
-                self.led_for_trip(trip.monitor)
+                self.indicate_for_trip(trip.monitor)
                 self.write_journal(trip)
 
                 if sample.rpm is None or sample.rpm < tcfg.engine_off_rpm:
@@ -226,6 +248,7 @@ class Daemon:
                 self.can_listener.close()
             self.led.set_mode(LedMode.OFF)
             self.led.close()
+            self.buzzer.close()
             self.storage.close()
 
 

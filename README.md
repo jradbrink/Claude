@@ -43,16 +43,37 @@ cd pi && python -m pytest tests/
    `/etc/blackbox.env` (Supabase-URL + service-nyckel).
 4. `sudo systemctl start blackbox && journalctl -fu blackbox`
 
-Koppling: OBDLink SX i bilens OBD-uttag → USB på Pi:n. RGB-LED (gemensam katod)
-med 330 Ω-motstånd på BCM 17 (röd), 27 (grön), 22 (blå) + GND.
+Koppling: OBDLink SX i bilens OBD-uttag → USB på Pi:n. Aktiv 5 V buzzermodul
+på BCM 18 + GND (signalstyrd, tre pinnar: VCC/GND/SIG).
 
-| LED | Betydelse |
+## Signaler i bilen (buzzer)
+
+| Ljud | Betydelse |
 |---|---|
-| Blå långsam blink | Väntar på motor/ECU |
-| Röd fast | Motorn är kall — håll under 3 000 r/min |
-| Röd snabb blink | Överträdelse pågår (loggas) |
-| Gul fast | Kylvätskan varm, oljan värms fortfarande (kräver CAN-tillägget) |
-| Grön fast | Uppvärmd |
+| Snabbt ihållande pipande | Överträdelse pågår — du varvar för hårt på kall motor (loggas) |
+| Två korta pip | Motorn har nått full arbetstemperatur — kör på |
+| Ett kort pip (valbart, av som default) | Kylvätskan varm, oljan värms fortfarande (V1.5) |
+
+Tyst i övrigt — ingen konstant statuslampa. En RGB-LED stöds fortfarande för
+den som vill (`[led] enabled = true`, BCM 17/27/22, gemensam katod, 3×330 Ω),
+men är avstängd som default.
+
+## Push till telefonen
+
+Efter varje körning skickas en sammanfattning till din telefon via
+[ntfy](https://ntfy.sh) — gratis, inget konto, ingen egen server:
+
+1. Installera ntfy-appen (iOS/Android) och prenumerera på ett eget ämne med
+   långt slumpat namn, t.ex. `blackbox-996-h7Kq2mXw9p`.
+2. Sätt samma namn i `[notify] topic` i `/etc/blackbox.toml`.
+
+Exempel: *"Körning klar ✔ — 42 min, 38.2 km (est), uppvärmd efter 23 min
+(kylvätska 14, olja 23), max 4200 rpm, inga kallstartsöverträdelser"*.
+Körningar med överträdelse skickas med hög prioritet.
+
+OBS: Pi:n har bara nät i garaget (WiFi). Med tändningsstyrd ström skickas
+sammanfattningen därför oftast vid **nästa** motorstart (journalåterställning) —
+pushen är en sammanfattningskanal, realtidsvarningen i bilen är buzzern.
 
 ## V1.5: riktig oljetemperatur via CAN
 

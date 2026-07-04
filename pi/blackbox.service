@@ -1,0 +1,19 @@
+[Unit]
+Description=Black Box V1 - OBD trip logger and cold-start guard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/blackbox/venv/bin/python -m blackbox.main --config /etc/blackbox.toml
+WorkingDirectory=/opt/blackbox
+EnvironmentFile=-/etc/blackbox.env
+Restart=always
+RestartSec=5
+# Give the daemon time to finalize and save an active trip on stop.
+TimeoutStopSec=20
+User=root
+StateDirectory=blackbox
+
+[Install]
+WantedBy=multi-user.target

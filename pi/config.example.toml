@@ -1,0 +1,43 @@
+# Black Box V1 — device configuration
+# Copy to /etc/blackbox.toml and fill in the IDs from Supabase.
+
+[vehicle]
+vehicle_id = "00000000-0000-0000-0000-000000000000"  # vehicles.id in Supabase
+device_id = "00000000-0000-0000-0000-000000000001"   # devices.id in Supabase
+
+[thresholds]
+warm_coolant_c = 80.0        # "warmed up" once coolant reaches this (latched per trip)
+cold_rpm_limit = 3000        # revving past this while cold logs a violation
+rpm_hysteresis = 300         # episode ends below (limit - hysteresis)
+violation_end_delay_s = 2.0  # ...sustained for this many seconds
+
+[obd]
+port = ""                    # "" = auto-detect; e.g. "/dev/ttyUSB0" for OBDLink SX
+poll_interval_s = 0.5        # 2 Hz
+coolant_every_n_polls = 4    # coolant is slow-moving; query every 2 s
+mock = false                 # true = simulated drive, no car needed (dev/demo)
+
+[trip]
+engine_on_rpm = 300          # trip starts when RPM reaches this
+engine_off_rpm = 100         # ...and ends when RPM stays below this
+engine_off_end_s = 60.0      # for this long
+disconnect_end_s = 45.0      # or when the ECU stops answering for this long
+min_trip_duration_s = 60.0   # shorter "trips" (key cycles) are discarded
+max_integration_dt_s = 5.0   # cap dt in distance integration (no phantom km)
+
+[led]
+enabled = true
+red_pin = 17                 # BCM numbering, common-cathode RGB LED
+green_pin = 27
+blue_pin = 22
+
+[storage]
+db_path = "/var/lib/blackbox/blackbox.db"
+
+[supabase]
+# Prefer the environment (systemd EnvironmentFile): SUPABASE_URL, SUPABASE_SERVICE_KEY.
+# Values here are fallbacks for dev. Leave empty to run local-only.
+url = ""
+service_key = ""
+sync_interval_s = 300.0
+timeout_s = 10.0

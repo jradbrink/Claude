@@ -1,0 +1,238 @@
+"""Black Box daemon.
+
+Lifecycle per drive:
+
+    WAITING (blue blink) ── ECU answers & RPM >= engine_on_rpm ──► trip starts
+        │                                                              │
+        │   opportunistic Supabase sync                                │ poll @ 2 Hz:
+        │   (rate-limited, engine off)                                 │ state machine, LED,
+        │                                                              │ journal every 15 s
+        ◄── engine off / ECU silent / power cut ── trip finalized ─────┘
+             (power cut: journal recovered on next boot)
+
+Run:  python -m blackbox.main --config /etc/blackbox.toml
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import signal
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+from .config import AppConfig, load_config
+from .led import LedMode, StatusLed
+from .obd_source import ObdSource, create_source
+from .state import ColdStartMonitor, EngineState
+from .storage import Storage
+from .sync import SupabaseSync
+from .trip import TripRecorder, recover_summary
+
+log = logging.getLogger("blackbox")
+
+JOURNAL_WRITE_EVERY_S = 15.0
+RECONNECT_DELAY_S = 5.0
+
+
+class Daemon:
+    def __init__(self, cfg: AppConfig) -> None:
+        self.cfg = cfg
+        self.led = StatusLed(cfg.led)
+        self.storage = Storage(cfg.storage.db_path)
+        self.sync = (
+            SupabaseSync(cfg.supabase, self.storage, cfg.device_id)
+            if cfg.supabase.enabled
+            else None
+        )
+        if self.sync is None:
+            log.warning("Supabase not configured — running local-only")
+        self.source: ObdSource = create_source(cfg.obd)
+        self.journal_path = Path(cfg.storage.db_path).parent / "active_trip.json"
+        self.stop_requested = False
+        self._last_sync_attempt = 0.0
+        self._last_journal_write = 0.0
+
+    # -- crash recovery -----------------------------------------------------
+
+    def recover_journal(self) -> None:
+        """A journal file at boot means the last trip ended with a power cut
+        (the normal case with ignition-switched power). Close and save it."""
+        if not self.journal_path.exists():
+            return
+        try:
+            data = json.loads(self.journal_path.read_text())
+            summary = recover_summary(data)
+        except (ValueError, KeyError):
+            log.exception("Corrupt trip journal — discarding")
+            self.journal_path.unlink(missing_ok=True)
+            return
+        if summary.duration_s >= self.cfg.trip.min_trip_duration_s:
+            self.storage.save_trip(summary)
+            log.info(
+                "Recovered trip %s from journal (%ds, %.1f km)",
+                summary.id, summary.duration_s, summary.distance_km_est,
+            )
+        else:
+            log.info("Recovered journal trip shorter than %ss — discarded",
+                     self.cfg.trip.min_trip_duration_s)
+        self.journal_path.unlink(missing_ok=True)
+
+    # -- sync ---------------------------------------------------------------
+
+    def maybe_sync(self, force: bool = False) -> None:
+        if self.sync is None:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_sync_attempt < self.cfg.supabase.sync_interval_s:
+            return
+        self._last_sync_attempt = now
+        self.sync.sync_once()
+
+    # -- trip loop ----------------------------------------------------------
+
+    def led_for_trip(self, monitor: ColdStartMonitor) -> None:
+        if monitor.violation_active:
+            self.led.set_mode(LedMode.COLD_VIOLATION)
+        elif monitor.state is EngineState.WARM:
+            self.led.set_mode(LedMode.WARM)
+        else:
+            self.led.set_mode(LedMode.COLD)
+
+    def write_journal(self, trip: TripRecorder) -> None:
+        now = time.monotonic()
+        if now - self._last_journal_write < JOURNAL_WRITE_EVERY_S:
+            return
+        self._last_journal_write = now
+        tmp = self.journal_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(trip.snapshot()))
+        tmp.replace(self.journal_path)
+
+    def end_trip(self, trip: TripRecorder, ended_at: datetime) -> None:
+        summary = trip.finalize(ended_at)
+        if summary.duration_s >= self.cfg.trip.min_trip_duration_s:
+            self.storage.save_trip(summary)
+            log.info(
+                "Trip saved: %ds, %.1f km est, max %d rpm, warmed_up=%s, violations=%d",
+                summary.duration_s, summary.distance_km_est, summary.max_rpm,
+                summary.warmed_up, summary.cold_violation_count,
+            )
+            self.maybe_sync(force=True)
+        else:
+            log.info("Trip shorter than %ss — discarded", self.cfg.trip.min_trip_duration_s)
+        self.journal_path.unlink(missing_ok=True)
+
+    def run_connected(self) -> None:
+        """Poll until the ECU goes silent or the engine stays off."""
+        tcfg = self.cfg.trip
+        trip: TripRecorder | None = None
+        disconnect_since: float | None = None
+        engine_off_since: datetime | None = None
+
+        while not self.stop_requested:
+            sample = self.source.read()
+            now_mono = time.monotonic()
+
+            if sample is None:
+                if disconnect_since is None:
+                    disconnect_since = now_mono
+                if now_mono - disconnect_since >= tcfg.disconnect_end_s:
+                    if trip is not None:
+                        self.end_trip(trip, trip.last_sample_at)
+                    return
+                time.sleep(self.cfg.obd.poll_interval_s)
+                continue
+            disconnect_since = None
+
+            if trip is None:
+                if sample.rpm is not None and sample.rpm >= tcfg.engine_on_rpm:
+                    monitor = ColdStartMonitor(
+                        warm_coolant_c=self.cfg.thresholds.warm_coolant_c,
+                        cold_rpm_limit=self.cfg.thresholds.cold_rpm_limit,
+                        rpm_hysteresis=self.cfg.thresholds.rpm_hysteresis,
+                        violation_end_delay_s=self.cfg.thresholds.violation_end_delay_s,
+                    )
+                    trip = TripRecorder(
+                        vehicle_id=self.cfg.vehicle_id,
+                        device_id=self.cfg.device_id,
+                        monitor=monitor,
+                        started_at=sample.ts,
+                        max_integration_dt_s=tcfg.max_integration_dt_s,
+                    )
+                    engine_off_since = None
+                    log.info("Trip started (%s)", trip.id)
+                else:
+                    self.led.set_mode(LedMode.WAITING)
+                    self.maybe_sync()
+
+            if trip is not None:
+                trip.add_sample(sample.ts, sample.rpm, sample.coolant_c, sample.speed_kph)
+                self.led_for_trip(trip.monitor)
+                self.write_journal(trip)
+
+                if sample.rpm is None or sample.rpm < tcfg.engine_off_rpm:
+                    if engine_off_since is None:
+                        engine_off_since = sample.ts
+                    elif (sample.ts - engine_off_since).total_seconds() >= tcfg.engine_off_end_s:
+                        self.end_trip(trip, engine_off_since)
+                        trip = None
+                        engine_off_since = None
+                else:
+                    engine_off_since = None
+
+            time.sleep(self.cfg.obd.poll_interval_s)
+
+        if trip is not None:  # graceful shutdown (SIGTERM) mid-trip
+            self.end_trip(trip, trip.last_sample_at)
+
+    def run(self) -> None:
+        self.recover_journal()
+        try:
+            while not self.stop_requested:
+                self.led.set_mode(LedMode.WAITING)
+                if not self.source.connect():
+                    self.maybe_sync()
+                    # Sleep in short slices so SIGTERM stays responsive.
+                    deadline = time.monotonic() + RECONNECT_DELAY_S
+                    while not self.stop_requested and time.monotonic() < deadline:
+                        time.sleep(0.2)
+                    continue
+                self.run_connected()
+                self.source.close()
+        finally:
+            self.source.close()
+            self.led.set_mode(LedMode.OFF)
+            self.led.close()
+            self.storage.close()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Black Box V1 daemon")
+    parser.add_argument("--config", default="/etc/blackbox.toml")
+    parser.add_argument("--verbose", action="store_true")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    cfg = load_config(args.config)
+    daemon = Daemon(cfg)
+
+    def request_stop(signum, frame):
+        log.info("Signal %s — shutting down", signum)
+        daemon.stop_requested = True
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+
+    daemon.run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

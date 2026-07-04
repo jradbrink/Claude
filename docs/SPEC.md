@@ -233,10 +233,15 @@ röd = KALL, röd snabb blink = överträdelse, gul = KYLV. VARM, grön = UPPVÄ
   strömavbrott. Upsert (`Prefer: resolution=merge-duplicates`,
   `on_conflict=id`) av trips först, sedan cold_events (FK-ordning). Rader markeras
   `synced` i SQLite först efter 2xx-svar. `devices.last_seen_at` uppdateras som hälsopuls.
-- **Dashboard:** `web/index.html` — en statisk sida (Supabase Auth-inloggning +
+- **Dashboard:** `web/index.html` — statisk sida (Supabase Auth-inloggning +
   anon-nyckel; RLS-policyer i migration 0003 ger endast SELECT till inloggade).
-  Nyckeltal, månadsgraf och komplett körtabell. Det är den *primära* konsumtionsytan
-  för loggarna; telefonpush är default nedskalad till enbart överträdelser.
+  Nyckeltal, månadsgraf, komplett körtabell med expanderbar detaljvy per körning
+  (uppvärmning kylvätska/olja, kriterium, överträdelseepisoder ur `cold_events`).
+  Primär konsumtionsyta; telefonpush är default nedskalad till enbart överträdelser.
+- **Delningslänk:** `web/share.html` — skrivskyddad "bil-CV"-vy utan inloggning,
+  nås via token. Backend är RPC:n `public_share(token)` (SECURITY DEFINER, migration
+  0004): anon kan aldrig läsa tabellerna, bara hämta JSON-snapshotten för en giltig,
+  ej återkallad token. Länkar skapas/återkallas i dashboarden (`share_links`).
 - **Rapport:** `report/generate_report.py` läser Supabase (eller Pi:ns SQLite direkt med
   `--local-db`), aggregerar och renderar PDF med ReportLab: sidhuvud med bil + VIN +
   period, nyckeltalsrad (antal körningar, sträcka, körtid, andel körningar utan

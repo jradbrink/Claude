@@ -60,26 +60,35 @@ men är avstängd som default.
 
 ## Webbdashboard — alla loggar på en sida
 
-`web/index.html` är hela dashboarden: nyckeltal, körfrekvens per månad och
-en tabell med samtliga körningar, direkt ur Supabase. Inloggningsskyddad
-(Supabase Auth), mörkt/ljust läge, mobilvänlig.
+`web/` innehåller två statiska sidor (plus delad `ui.js`/`style.css`):
+
+- **`index.html`** — dashboarden: nyckeltal, körfrekvens per månad, tabell
+  med samtliga körningar. **Klicka på en rad** för detaljvyn: uppvärmning
+  uppdelad kylvätska/olja, kriterium, och varje överträdelseepisod med
+  tidpunkt, varaktighet, max-varv och temperaturer. Inloggningsskyddad
+  (Supabase Auth), mörkt/ljust läge, mobilvänlig. Härifrån hanterar du
+  också delningslänkarna.
+- **`share.html`** — skrivskyddad "bil-CV"-sida för spekulanter och
+  försäkringsbolag. Nås endast via delningslänk med token; ingen
+  inloggning krävs av mottagaren och länken kan återkallas när som helst
+  från dashboarden. `noindex` satt så sidan inte hamnar i sökmotorer.
 
 Setup (engångs, ~10 min):
 
-1. Kör `supabase/migrations/0003_dashboard_read.sql` — ger inloggade
-   användare läsrättigheter (anon ser ingenting, Pi:n skriver med
-   service-nyckeln som förut).
+1. Kör `supabase/migrations/0003_dashboard_read.sql` (läsrättigheter för
+   inloggade) och `0004_share_links.sql` (delningslänkar + publik
+   RPC-funktion). Anon-rollen kan aldrig läsa tabellerna direkt — det enda
+   som nås utan inloggning är `public_share(token)` med giltig token.
 2. Skapa din användare i Supabase: Authentication → Users → Add user.
    Låt publik självregistrering vara avstängd.
-3. Fyll i `SUPABASE_URL` och `SUPABASE_ANON_KEY` i konfig-blocket längst
-   ner i `web/index.html` (anon-nyckeln är gjord för att vara publik —
-   åtkomsten styrs av RLS + inloggningen).
-4. Publicera filen var du vill — GitHub Pages, Netlify eller Vercel
-   (gratis; det är en enda statisk fil). Utan konfig visar sidan ett
-   demoläge med exempeldata så du kan förhandsgranska direkt.
+3. Fyll i `SUPABASE_URL` och `SUPABASE_ANON_KEY` i konfig-blocken längst
+   ner i `web/index.html` **och** `web/share.html` (anon-nyckeln är gjord
+   för att vara publik — åtkomsten styrs av RLS + inloggning/token).
+4. Publicera `web/`-mappen — GitHub Pages, Netlify eller Vercel (gratis).
+   Utan konfig visar sidorna ett demoläge med exempeldata.
 
-Dashboarden är stället du *tittar*; PDF:en (`report/`) är det du *skickar*
-till försäkringsbolag eller köpare.
+Dashboarden är stället du *tittar*; delningslänken är det du *visar upp*;
+PDF:en (`report/`) är det du *skickar* som dokument.
 
 ## Push till telefonen (valbart — endast avvikelser)
 

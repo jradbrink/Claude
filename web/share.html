@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fordonslogg — delad vy</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <div id="invalid" class="login hidden">
+    <div>
+      <div class="kicker">Black Box</div>
+      <h1>Länken är inte giltig</h1>
+      <p class="meta">Delningslänken har återkallats eller är felaktig.
+      Be ägaren om en ny länk.</p>
+    </div>
+  </div>
+
+  <div id="app" class="hidden">
+    <div class="banner" id="shareBanner">
+      Skrivskyddad delad vy — automatiskt registrerad körlogg, utan manuell inmatning.
+    </div>
+    <header>
+      <div>
+        <div class="kicker">Ägarlogg — fordonsanvändning</div>
+        <h1 id="vehicleName">…</h1>
+        <div class="meta" id="vehicleMeta"></div>
+      </div>
+    </header>
+
+    <div class="stats" id="stats"></div>
+
+    <h2>Körningar per månad (senaste 12 månaderna)</h2>
+    <div class="chart-card"><div id="chart"></div></div>
+
+    <h2>Alla körningar (<span id="tripCount">0</span>)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Datum</th><th>Start</th><th>Varaktighet</th><th>Sträcka (est.)</th>
+          <th>Uppvärmning</th><th>Max r/min</th><th>Max kylv.</th><th>Max olja</th>
+          <th>Överträdelser</th>
+        </tr></thead>
+        <tbody id="tripRows"></tbody>
+      </table>
+    </div>
+
+    <p class="footnote">
+      Samtliga uppgifter är automatiskt registrerade via fordonets OBD-II-uttag
+      (varvtal, kylvätsketemperatur, hastighet) och CAN-buss (oljetemperatur).
+      Sträckor är uppskattade ur hastighetssignalen. ”Överträdelse” = varvtal
+      över 3&nbsp;000 r/min innan motorn nått arbetstemperatur (80 °C).
+      Genererad av Black Box.
+    </p>
+  </div>
+
+  <div class="tooltip" id="tooltip"></div>
+</div>
+
+<script type="module">
+/* Samma värden som i index.html. Anon-nyckeln är publik per design;
+   den enda data som går att nå utan inloggning är public_share(token). */
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
+
+import { showApp, demoData, fmtDate } from "./ui.js";
+const $ = (id) => document.getElementById(id);
+
+async function boot() {
+  const token = new URLSearchParams(location.search).get("token");
+
+  if (!SUPABASE_URL) {  // demoläge för förhandsgranskning
+    const { vehicle, trips } = demoData();
+    showApp(vehicle, trips, { metaSuffix: "Delad vy (demoläge)" });
+    return;
+  }
+  if (!token) {
+    $("invalid").classList.remove("hidden");
+    return;
+  }
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/public_share`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ share_token: token }),
+  });
+  const data = resp.ok ? await resp.json() : null;
+  if (!data) {
+    $("invalid").classList.remove("hidden");
+    return;
+  }
+  showApp(data.vehicle, data.trips, {
+    metaSuffix: `Delad ${fmtDate(new Date(data.generated_at))}`,
+  });
+}
+boot();
+</script>
+</body>
+</html>

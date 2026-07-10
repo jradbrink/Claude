@@ -45,7 +45,7 @@ Kopplingar och pinnar refererar till `docs/SPEC.md` och `pi/config.example.toml`
 | 11 | **Waveshare RS485 CAN HAT** (MCP2515) | | 150–250 | Electrokit | Monteras på 40-pinsheadern. **Aktivera inte termineringsbygeln** — bilens buss är redan terminerad. Oscillatorvärdet (8/12/16 MHz står på kristallen) ska matcha `dtoverlay`-raden, se README. |
 | 12 | Tvinnat kabelpar 0,35–0,5 mm², ~2 m | | 30 | Biltema, Electrokit | CAN-H/CAN-L från instrumentklustrets kontakt till HAT:en. Behåll tvinningen hela vägen. |
 | 13 | Skarvdon: Posi-Tap/Scotchlok, alt. lödning + krympslang | | 60 | Biltema, Amazon.se | Posi-Tap är återställningsbart utan att klippa kabel — snällast mot en entusiastbil. |
-| 14 | Verifieringsreferens: Durametric-avläsning | lånad/verkstad, engångs | 0–? | | Engångskontroll av dekodningen (`byte5 × 0,75 − 48` på ID 0x4E0) innan värdet litas på. |
+| 14 | Verifiering av dekodningen | `pi/tools/verify_oil_decode.py` | 0 | ingår | Självverifiering mot OBD-referensen under en uppvärmning — ingen Durametric behövs. Vid FAIL: `--dump` spelar in rå trace + referens för korrelationsbaserad reverse engineering. |
 
 **Delsumma D: ca 250–350 kr**
 

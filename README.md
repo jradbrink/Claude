@@ -148,8 +148,22 @@ interna CAN-buss. Med en MCP2515-baserad CAN-HAT läser daemonen den passivt
 3. `install.sh` installerar `can0.service` som sätter upp interfacet i
    listen-only-läge med 500 kbit/s (justera bitrate i `can0.service` om din
    buss kör annat).
-4. Verifiera dekodningen innan du litar på den: kör `candump can0 | grep 4E0`
-   med varm motor och jämför `byte5 * 0.75 - 48` mot en Durametric-avläsning.
+4. Verifiera dekodningen innan du litar på den — ingen Durametric behövs:
+
+   ```bash
+   # starta med KALL motor, kör/tomgångskör ~20 min
+   python3 pi/tools/verify_oil_decode.py --port /dev/ttyUSB0 --out /tmp/oilverify
+   ```
+
+   Verktyget läser OBD-kylvätsketemp (referens) och CAN-kandidaten samtidigt
+   och kontrollerar fysiken varje M96-uppvärmning måste följa: samma
+   starttemperatur som kylvätskan, monoton stigning, når 80 °C flera minuter
+   EFTER kylvätskan, rimlig platå (75–115 °C) och hög korrelation. Alla
+   PASS ⇒ dekodningen stämmer. Något FAIL ⇒ kör om med `--dump`, som även
+   spelar in hela rå-CAN-tracen + OBD-referensen som tidssynkade CSV:er —
+   exakt det format korrelationsbaserad reverse engineering behöver (t.ex.
+   CSS Electronics öppna Claude Code-skill för CAN-reverse-engineering).
+   En Durametric-avläsning fungerar förstås också som facit.
 5. Sätt `enabled = true` under `[can]` i `/etc/blackbox.toml`.
 
 Om CAN-datan uteblir (kabelbrott, HAT saknas) degraderar daemonen automatiskt

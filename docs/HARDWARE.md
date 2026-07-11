@@ -49,6 +49,39 @@ Kopplingar och pinnar refererar till `docs/SPEC.md` och `pi/config.example.toml`
 
 **Delsumma D: ca 250–350 kr**
 
+## F. CAN-test med MacBook (före Pi-bygget)
+
+Testar du CAN-dekodningen direkt från MacBook Pro behövs bara detta —
+OBDLink SX (rad 3) återanvänds som referenssignal:
+
+| # | Komponent | Spec / exempel | Ca-pris | Var | Notering |
+|---|---|---|---|---|---|
+| 18 | **CANable 2.0** USB-CAN-adapter | original (Openlight Labs) eller MKS/Makerbase-klon | 150–400 | Amazon.se (sök "CANable 2.0"), AliExpress (MKS officiell butik, 1–2 v), openlightlabs.com (~35 USD) | Öppen hårdvara med förstklassigt python-can-stöd. **Köp inte Waveshare USB-CAN-A** (finns hos Electrokit) — proprietärt protokoll utan slcan-stöd. |
+| 19 | Panelverktyg plast (demonteringskit) | | 100 | Biltema | För att lossa panelen vid instrumentklustret utan märken i inredningen. |
+| 12–13 | Tvinnat par + Posi-Tap (som rad 12–13 ovan) | | 90 | Biltema | Samma inkoppling som Pi-varianten — kabeln återanvänds sedan till Pi:n. |
+
+**Setup på MacBooken (engångs):**
+
+1. Flasha slcan-firmware på CANable:n via webbflashern på canable.io/updater
+   (Chrome, DFU-läge — kloner levereras med varierande firmware).
+2. Kontrollera att adapterns **120 Ω-terminering är AV** (bygel/lödbrygga på
+   kortet) — bilens buss är redan terminerad.
+3. Anslut CAN-H/CAN-L till klustrets CAN-par (Posi-Tap), adaptern i USB:
+   `ls /dev/tty.usbmodem*` ger kanalnamnet.
+4. Kör verifieringen (OBDLink i OBD-uttaget för referensen):
+
+   ```bash
+   python3 pi/tools/verify_oil_decode.py \
+       --interface slcan --channel /dev/tty.usbmodemXXXX --bitrate 500000 \
+       --port /dev/tty.usbserial-XXXX --out ~/oilverify
+   ```
+
+   Not: slcan öppnas i normalt läge (inte listen-only som Pi:ns socketcan) —
+   våra verktyg sänder aldrig något, men Pi + socketcan listen-only förblir
+   guldstandarden för permanent montering.
+
+**Delsumma F: ca 340–590 kr** (utöver OBDLink)
+
 ## E. Montering & övrigt
 
 | # | Komponent | Spec / exempel | Ca-pris | Var | Notering |

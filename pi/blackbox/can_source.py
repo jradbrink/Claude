@@ -38,6 +38,8 @@ def decode_oil_temp(data: bytes, byte_index: int, factor: float, offset: float) 
 class OilTempCanListener:
     def __init__(self, cfg) -> None:
         self.channel = cfg.channel
+        self.interface = cfg.interface
+        self.bitrate = cfg.bitrate
         self.can_id = cfg.can_id
         self.byte_index = cfg.byte_index
         self.factor = cfg.factor
@@ -73,11 +75,14 @@ class OilTempCanListener:
         while not self._stop.is_set():
             bus = None
             try:
-                bus = can.Bus(
-                    channel=self.channel,
-                    interface="socketcan",
-                    can_filters=[{"can_id": self.can_id, "can_mask": 0x7FF}],
-                )
+                kwargs = {
+                    "channel": self.channel,
+                    "interface": self.interface,
+                    "can_filters": [{"can_id": self.can_id, "can_mask": 0x7FF}],
+                }
+                if self.bitrate:  # slcan and friends; socketcan sets it at link level
+                    kwargs["bitrate"] = self.bitrate
+                bus = can.Bus(**kwargs)
                 log.info("CAN listener up on %s (id 0x%X)", self.channel, self.can_id)
                 while not self._stop.is_set():
                     msg = bus.recv(timeout=1.0)

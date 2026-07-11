@@ -31,7 +31,9 @@ class CanConfig:
     """Oil temp from the internal CAN bus (V1.5). Decode is configurable so a
     later car (997 etc.) is a config change, not a code change."""
     enabled: bool = False
-    channel: str = "can0"
+    channel: str = "can0"          # Pi/socketcan: "can0"; Mac/slcan: "/dev/tty.usbserial-XXXX"
+    interface: str = "socketcan"   # "slcan" for USB CAN adapters (CANable etc.) on macOS
+    bitrate: int = 0               # 0 = managed outside python-can (socketcan); slcan: 500000
     can_id: int = 0x4E0
     byte_index: int = 5
     factor: float = 0.75

@@ -144,9 +144,12 @@ def evaluate(
 
 class CanCapture(threading.Thread):
     def __init__(self, channel: str, can_id: int, byte_index: int,
-                 factor: float, offset: float, dump_all: bool) -> None:
+                 factor: float, offset: float, dump_all: bool,
+                 interface: str = "socketcan", bitrate: int = 0) -> None:
         super().__init__(daemon=True)
         self.channel = channel
+        self.interface = interface
+        self.bitrate = bitrate
         self.can_id = can_id
         self.byte_index = byte_index
         self.factor = factor
@@ -165,7 +168,11 @@ class CanCapture(threading.Thread):
             return
         try:
             filters = None if self.dump_all else [{"can_id": self.can_id, "can_mask": 0x7FF}]
-            bus = can.Bus(channel=self.channel, interface="socketcan", can_filters=filters)
+            kwargs = {"channel": self.channel, "interface": self.interface,
+                      "can_filters": filters}
+            if self.bitrate:
+                kwargs["bitrate"] = self.bitrate
+            bus = can.Bus(**kwargs)
         except Exception as exc:
             self.error = f"CAN bus open failed: {exc}"
             return
@@ -215,7 +222,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", default="", help="OBD serial port ('' = auto)")
-    ap.add_argument("--channel", default="can0")
+    ap.add_argument("--channel", default="can0",
+                    help="socketcan: can0; macOS/slcan: /dev/tty.usbserial-XXXX")
+    ap.add_argument("--interface", default="socketcan",
+                    help="python-can interface, e.g. slcan for USB CAN adapters on macOS")
+    ap.add_argument("--bitrate", type=int, default=0,
+                    help="bus bitrate for slcan etc. (e.g. 500000); 0 = managed externally")
     ap.add_argument("--can-id", type=lambda v: int(v, 0), default=0x4E0)
     ap.add_argument("--byte-index", type=int, default=5)
     ap.add_argument("--factor", type=float, default=0.75)
@@ -236,7 +248,8 @@ def main() -> None:
     print("Start this with a COLD engine, then drive/idle until coolant is warm.\n")
 
     cap = CanCapture(args.channel, args.can_id, args.byte_index,
-                     args.factor, args.offset, args.dump)
+                     args.factor, args.offset, args.dump,
+                     interface=args.interface, bitrate=args.bitrate)
     cap.start()
     coolant: list[tuple[float, float]] = []
     rpm: list[tuple[float, float]] = []

@@ -14,6 +14,26 @@ pi/tests/                     Enhetstester för tillstånds- och trip-logik
 report/generate_report.py     PDF-rapportgenerator (Supabase eller lokal SQLite)
 ```
 
+## Testa på din dator först — ingen Pi behövs
+
+Allt utom GPIO (buzzer/LED) och SocketCAN är plattformsoberoende. Tre nivåer:
+
+1. **Utan någon hårdvara alls (5 min):** mock-läget nedan simulerar en hel
+   kallstartskörning — tillståndsmaskin, körlogg, SQLite, Supabase-synk och
+   push funkar på riktigt; buzzer/LED loggas i terminalen. Dashboarden och
+   PDF-rapporten körs redan lokalt (demoläge resp. `--local-db`).
+2. **I bilen med bara OBDLink SX + dator:** anslut adaptern, sätt
+   `[obd] port` till serieporten (macOS: `/dev/tty.usbserial-XXXX`, syns med
+   `ls /dev/tty.usbserial*`) och kör daemonen direkt — hela V1 (kallstartsvakt,
+   automatisk körlogg, molnsynk) fungerar utan Pi. Det är också det bästa
+   sättet att validera produkten innan du beställer resten av hårdvaran.
+3. **CAN/oljetemp på dator:** SocketCAN finns bara på Linux. På macOS använd
+   en USB-CAN-adapter (t.ex. CANable, ~300 kr) och sätt
+   `[can] interface = "slcan"`, `channel = "/dev/tty.usbmodemXXXX"`,
+   `bitrate = 500000` — samma inställningar finns som flaggor på
+   `pi/tools/verify_oil_decode.py` (`--interface slcan --bitrate 500000`).
+   Eller vänta med CAN-delen tills Pi:n är på plats.
+
 ## Snabbstart — utveckling utan bil
 
 Daemonen har en mock-källa som simulerar en kallstart med en över-varvning,

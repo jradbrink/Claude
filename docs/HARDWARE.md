@@ -66,8 +66,24 @@ OBDLink SX (rad 3) återanvänds som referenssignal:
    (Chrome, DFU-läge — kloner levereras med varierande firmware).
 2. Kontrollera att adapterns **120 Ω-terminering är AV** (bygel/lödbrygga på
    kortet) — bilens buss är redan terminerad.
-3. Anslut CAN-H/CAN-L till klustrets CAN-par (Posi-Tap), adaptern i USB:
-   `ls /dev/tty.usbmodem*` ger kanalnamnet.
+3. **Inkoppling i 996:an** (OBD-uttaget saknar CAN — diagnos går via K-line,
+   så tappning sker bakom instrumentklustret, samma punkt som
+   eftermarknadsmätare använder):
+   a. Tändning av, batteriets minuspol av medan du gör själva tappen.
+   b. Ta ut klustret (två skruvar bakom sargen, välkänd 996-procedur —
+      se Pelican Parts artikel om 996-kluster). Rör inte airbag-kablage.
+   c. Identifiera CAN-paret i kablaget: det **tvinnade paret**. Verifiera:
+      ~60 Ω mellan trådarna med batteri frånkopplat (två 120 Ω-terminering
+      i parallell) och, efter återanslutet batteri med tändning på,
+      ~2,6 V (CAN-H) resp. ~2,4 V (CAN-L) mot chassijord.
+   d. Posi-Tap på bägge trådarna, tvinnat par ut till CANable:ns
+      CAN-H/CAN-L (H till H, L till L). GND behöver inte kopplas för
+      lyssning, men adapterns GND till chassi kan minska störningar.
+   e. Första test alltid STILLASTÅENDE med tändning på: kör
+      `python3 -c "import can; b=can.Bus(channel='/dev/tty.usbmodemXXXX',interface='slcan',bitrate=500000); print(b.recv(5))"`
+      — ser du frames är bitraten rätt; ser du inget/skräp, koppla ur och
+      prova 250000. Kör aldrig första anslutningen under färd.
+   Adaptern i USB: `ls /dev/tty.usbmodem*` ger kanalnamnet.
 4. Kör verifieringen (OBDLink i OBD-uttaget för referensen):
 
    ```bash

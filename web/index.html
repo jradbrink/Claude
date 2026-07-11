@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Black Box — Körlogg</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <div id="login" class="login hidden">
+    <div>
+      <div class="kicker">Black Box</div>
+      <h1>Körlogg</h1>
+    </div>
+    <input id="email" type="email" placeholder="E-post" autocomplete="username">
+    <input id="password" type="password" placeholder="Lösenord" autocomplete="current-password">
+    <button class="primary" id="loginBtn">Logga in</button>
+    <div class="error" id="loginError"></div>
+  </div>
+
+  <div id="app" class="hidden">
+    <div id="demoBanner" class="banner hidden">
+      Demoläge — fyll i SUPABASE_URL och SUPABASE_ANON_KEY längst ner i index.html
+      för att visa riktiga data.
+    </div>
+    <header>
+      <div>
+        <div class="kicker">Ägarlogg — fordonsanvändning</div>
+        <h1 id="vehicleName">…</h1>
+        <div class="meta" id="vehicleMeta"></div>
+      </div>
+      <button id="logoutBtn" class="hidden">Logga ut</button>
+    </header>
+
+    <div class="stats" id="stats"></div>
+
+    <h2>Körningar per månad (senaste 12 månaderna)</h2>
+    <div class="chart-card"><div id="chart"></div></div>
+
+    <h2>Alla körningar (<span id="tripCount">0</span>) — klicka på en rad för detaljer</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Datum</th><th>Start</th><th>Varaktighet</th><th>Sträcka (est.)</th>
+          <th>Uppvärmning</th><th>Max r/min</th><th>Max kylv.</th><th>Max olja</th>
+          <th>Överträdelser</th>
+        </tr></thead>
+        <tbody id="tripRows"></tbody>
+      </table>
+    </div>
+
+    <div id="shareSection" class="hidden">
+      <h2>Delningslänkar</h2>
+      <div class="share-card">
+        <div class="meta">
+          Skrivskyddad "bil-CV"-sida att skicka till spekulanter eller
+          försäkringsbolag. Länken visar loggen utan inloggning och kan
+          återkallas när som helst.
+        </div>
+        <ul id="shareList"></ul>
+        <p style="margin-top:10px">
+          <button class="primary small" id="createShareBtn">Skapa ny delningslänk</button>
+        </p>
+      </div>
+    </div>
+
+    <p class="footnote">
+      Automatiskt registrerat via OBD-II (varvtal, kylvätsketemperatur, hastighet)
+      och fordonets CAN-buss (oljetemperatur) utan manuell inmatning. Sträckor är
+      uppskattade ur hastighetssignalen. ”Överträdelse” = varvtal över 3&nbsp;000 r/min
+      innan motorn nått arbetstemperatur. PDF-intyg genereras med
+      <code>report/generate_report.py</code>.
+    </p>
+  </div>
+
+  <div class="tooltip" id="tooltip"></div>
+</div>
+
+<script type="module">
+/* ================= konfiguration =================
+   Klistra in värdena från Supabase → Settings → API.
+   Anon-nyckeln är gjord för att vara publik; åtkomsten styrs av RLS
+   (migration 0003) + inloggning. Tomt = demoläge med exempeldata.  */
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
+/* ================================================= */
+
+import { showApp, demoData } from "./ui.js";
+const $ = (id) => document.getElementById(id);
+
+async function boot() {
+  if (!SUPABASE_URL) {
+    $("demoBanner").classList.remove("hidden");
+    const { vehicle, trips, eventsByTrip } = demoData();
+    showApp(vehicle, trips, { expandable: true, eventsByTrip });
+    return;
+  }
+  const { createClient } = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
+  const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  let vehicleId = null;
+
+  async function fetchAll(table, order) {
+    const rows = [];
+    for (let from = 0; ; from += 1000) {
+      let q = sb.from(table).select("*").range(from, from + 999);
+      if (order) q = q.order(...order);
+      const { data, error } = await q;
+      if (error) throw error;
+      rows.push(...data);
+      if (data.length < 1000) return rows;
+    }
+  }
+
+  async function loadData() {
+    const { data: vehicles } = await sb.from("vehicles").select("*").limit(1);
+    vehicleId = vehicles?.[0]?.id ?? null;
+    const trips = await fetchAll("trips", ["started_at", { ascending: false }]);
+    const events = await fetchAll("cold_events");
+    const eventsByTrip = {};
+    for (const e of events) (eventsByTrip[e.trip_id] ??= []).push(e);
+    showApp(vehicles?.[0], trips, { expandable: true, eventsByTrip });
+    $("logoutBtn").classList.remove("hidden");
+    $("shareSection").classList.remove("hidden");
+    await refreshShareLinks();
+  }
+
+  /* -- delningslänkar -- */
+  const shareUrl = (token) =>
+    new URL(`share.html?token=${token}`, location.href).href;
+
+  async function refreshShareLinks() {
+    const { data, error } = await sb.from("share_links").select("*")
+      .eq("revoked", false).order("created_at", { ascending: false });
+    if (error) return;
+    $("shareList").innerHTML = data.length
+      ? data.map((l) => `<li>
+          <code>${shareUrl(l.token)}</code>
+          <button class="small" data-copy="${l.token}">Kopiera</button>
+          <button class="small" data-revoke="${l.token}">Återkalla</button>
+          <span class="ok">${new Date(l.created_at).toLocaleDateString("sv-SE")}</span>
+        </li>`).join("")
+      : `<li class="ok">Inga aktiva länkar.</li>`;
+    $("shareList").querySelectorAll("[data-copy]").forEach((b) =>
+      b.addEventListener("click", () => navigator.clipboard.writeText(shareUrl(b.dataset.copy))));
+    $("shareList").querySelectorAll("[data-revoke]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        await sb.from("share_links").update({ revoked: true }).eq("token", b.dataset.revoke);
+        refreshShareLinks();
+      }));
+  }
+
+  $("createShareBtn").addEventListener("click", async () => {
+    if (!vehicleId) return;
+    await sb.from("share_links").insert({ vehicle_id: vehicleId });
+    refreshShareLinks();
+  });
+
+  /* -- auth -- */
+  $("loginBtn").addEventListener("click", async () => {
+    $("loginError").textContent = "";
+    const { error } = await sb.auth.signInWithPassword({
+      email: $("email").value.trim(),
+      password: $("password").value,
+    });
+    if (error) $("loginError").textContent = "Fel e-post eller lösenord.";
+    else loadData().catch((e) => ($("loginError").textContent = e.message));
+  });
+  $("password").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") $("loginBtn").click();
+  });
+  $("logoutBtn").addEventListener("click", async () => {
+    await sb.auth.signOut();
+    location.reload();
+  });
+
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) loadData().catch(console.error);
+  else $("login").classList.remove("hidden");
+}
+boot();
+</script>
+</body>
+</html>

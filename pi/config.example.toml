@@ -1,0 +1,79 @@
+# Black Box V1 — device configuration
+# Copy to /etc/blackbox.toml and fill in the IDs from Supabase.
+
+[vehicle]
+vehicle_id = "00000000-0000-0000-0000-000000000000"  # vehicles.id in Supabase
+device_id = "00000000-0000-0000-0000-000000000001"   # devices.id in Supabase
+
+[thresholds]
+warm_coolant_c = 80.0        # coolant threshold (latched per trip)
+warm_oil_c = 80.0            # oil threshold, used when oil data is available
+warm_criterion = "auto"      # "auto" = oil_and_coolant when [can] is enabled,
+                             # else "coolant". Explicit: "coolant" | "oil_and_coolant"
+cold_rpm_limit = 3000        # revving past this before fully warm logs a violation
+rpm_hysteresis = 300         # episode ends below (limit - hysteresis)
+violation_end_delay_s = 2.0  # ...sustained for this many seconds
+
+[obd]
+port = ""                    # "" = auto-detect; e.g. "/dev/ttyUSB0" for OBDLink SX
+poll_interval_s = 0.5        # 2 Hz
+coolant_every_n_polls = 4    # coolant is slow-moving; query every 2 s
+mock = false                 # true = simulated drive, no car needed (dev/demo)
+
+[can]
+# V1.5: real oil temp, listened (never transmitted) from the car's internal
+# CAN bus via an MCP2515 HAT tapped at the instrument cluster. Bitrate and
+# listen-only mode are set on the interface (see can0.service). Decode below
+# is the community-documented 996.2 layout — VERIFY against a Durametric
+# readout before trusting the values.
+enabled = false
+channel = "can0"
+can_id = 0x4E0               # DME broadcast containing oil temp (996.2)
+byte_index = 5               # start bit 40 -> byte 5, 8 bits, unsigned
+factor = 0.75
+offset = -48.0
+stale_after_s = 10.0         # reading older than this counts as "no data"
+
+[trip]
+engine_on_rpm = 300          # trip starts when RPM reaches this
+engine_off_rpm = 100         # ...and ends when RPM stays below this
+engine_off_end_s = 60.0      # for this long
+disconnect_end_s = 45.0      # or when the ECU stops answering for this long
+min_trip_duration_s = 60.0   # shorter "trips" (key cycles) are discarded
+max_integration_dt_s = 5.0   # cap dt in distance integration (no phantom km)
+
+[buzzer]
+# Primary in-car indicator: active 5 V buzzer module on a GPIO pin.
+# Signals: rapid beeping while a cold violation is in progress,
+# two short beeps when the engine is fully warmed up.
+enabled = true
+pin = 18                     # BCM numbering
+chime_on_warm = true         # two beeps at "fully warm"
+chime_on_coolant_warm = false# one beep at the intermediate stage (V1.5)
+
+[notify]
+# Optional push via ntfy (install the ntfy app, subscribe to the topic).
+# The web dashboard (web/) is the primary place to browse trips — push is
+# for exceptions. only_violations = true means clean trips are not pushed.
+# Topic name is the only secret — long and random. Empty topic = disabled.
+ntfy_url = "https://ntfy.sh"
+topic = ""
+only_violations = true
+timeout_s = 5.0
+
+[led]
+enabled = false              # optional now that the buzzer is the indicator
+red_pin = 17                 # BCM numbering, common-cathode RGB LED
+green_pin = 27
+blue_pin = 22
+
+[storage]
+db_path = "/var/lib/blackbox/blackbox.db"
+
+[supabase]
+# Prefer the environment (systemd EnvironmentFile): SUPABASE_URL, SUPABASE_SERVICE_KEY.
+# Values here are fallbacks for dev. Leave empty to run local-only.
+url = ""
+service_key = ""
+sync_interval_s = 300.0
+timeout_s = 10.0

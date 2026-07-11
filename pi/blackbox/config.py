@@ -1,0 +1,162 @@
+"""Configuration loading.
+
+Everything lives in a TOML file (see pi/config.example.toml). Supabase
+credentials may instead come from the environment (SUPABASE_URL /
+SUPABASE_SERVICE_KEY), which is how the systemd unit provides them so the
+secret never sits in the config file.
+"""
+
+from __future__ import annotations
+
+import os
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Thresholds:
+    warm_coolant_c: float = 80.0
+    warm_oil_c: float = 80.0
+    # "auto" = require oil when the CAN listener is enabled, else coolant-only.
+    # Explicit values: "coolant" | "oil_and_coolant".
+    warm_criterion: str = "auto"
+    cold_rpm_limit: int = 3000
+    rpm_hysteresis: int = 300
+    violation_end_delay_s: float = 2.0
+
+
+@dataclass(frozen=True)
+class CanConfig:
+    """Oil temp from the internal CAN bus (V1.5). Decode is configurable so a
+    later car (997 etc.) is a config change, not a code change."""
+    enabled: bool = False
+    channel: str = "can0"          # Pi/socketcan: "can0"; Mac/slcan: "/dev/tty.usbserial-XXXX"
+    interface: str = "socketcan"   # "slcan" for USB CAN adapters (CANable etc.) on macOS
+    bitrate: int = 0               # 0 = managed outside python-can (socketcan); slcan: 500000
+    can_id: int = 0x4E0
+    byte_index: int = 5
+    factor: float = 0.75
+    offset: float = -48.0
+    stale_after_s: float = 10.0
+
+
+@dataclass(frozen=True)
+class ObdConfig:
+    port: str = ""  # empty = let python-OBD auto-detect
+    poll_interval_s: float = 0.5
+    coolant_every_n_polls: int = 4  # coolant moves slowly; poll it less often
+    mock: bool = False
+
+
+@dataclass(frozen=True)
+class TripConfig:
+    engine_on_rpm: int = 300
+    engine_off_rpm: int = 100
+    engine_off_end_s: float = 60.0
+    disconnect_end_s: float = 45.0
+    min_trip_duration_s: float = 60.0
+    max_integration_dt_s: float = 5.0
+
+
+@dataclass(frozen=True)
+class LedConfig:
+    enabled: bool = False  # optional since the buzzer became the primary indicator
+    red_pin: int = 17
+    green_pin: int = 27
+    blue_pin: int = 22
+
+
+@dataclass(frozen=True)
+class BuzzerConfig:
+    enabled: bool = True
+    pin: int = 18
+    chime_on_warm: bool = True          # two beeps when fully warmed up
+    chime_on_coolant_warm: bool = False # one beep at the intermediate stage
+
+
+@dataclass(frozen=True)
+class NotifyConfig:
+    """Push to phone via ntfy. Enabled when topic is set. The dashboard is
+    the primary place to read logs; push is for exceptions."""
+    ntfy_url: str = "https://ntfy.sh"
+    topic: str = ""
+    only_violations: bool = True  # skip "trip done" pushes for clean trips
+    timeout_s: float = 5.0
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.topic)
+
+
+@dataclass(frozen=True)
+class StorageConfig:
+    db_path: str = "/var/lib/blackbox/blackbox.db"
+
+
+@dataclass(frozen=True)
+class SupabaseConfig:
+    url: str = ""
+    service_key: str = ""
+    sync_interval_s: float = 300.0
+    timeout_s: float = 10.0
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.url and self.service_key)
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    vehicle_id: str
+    device_id: str
+    thresholds: Thresholds = field(default_factory=Thresholds)
+    obd: ObdConfig = field(default_factory=ObdConfig)
+    can: CanConfig = field(default_factory=CanConfig)
+    trip: TripConfig = field(default_factory=TripConfig)
+    led: LedConfig = field(default_factory=LedConfig)
+    buzzer: BuzzerConfig = field(default_factory=BuzzerConfig)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
+    supabase: SupabaseConfig = field(default_factory=SupabaseConfig)
+
+
+def _section(data: dict, name: str, cls):
+    return cls(**data.get(name, {}))
+
+
+def load_config(path: str | Path) -> AppConfig:
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+
+    vehicle = data.get("vehicle", {})
+    vehicle_id = vehicle.get("vehicle_id", "")
+    device_id = vehicle.get("device_id", "")
+    if not vehicle_id or not device_id:
+        raise ValueError("config: [vehicle] vehicle_id and device_id are required")
+
+    supa = data.get("supabase", {})
+    supa["url"] = os.environ.get("SUPABASE_URL", supa.get("url", ""))
+    supa["service_key"] = os.environ.get(
+        "SUPABASE_SERVICE_KEY", supa.get("service_key", "")
+    )
+
+    thresholds = _section(data, "thresholds", Thresholds)
+    if thresholds.warm_criterion not in ("auto", "coolant", "oil_and_coolant"):
+        raise ValueError(
+            "config: warm_criterion must be 'auto', 'coolant' or 'oil_and_coolant'"
+        )
+
+    return AppConfig(
+        vehicle_id=vehicle_id,
+        device_id=device_id,
+        thresholds=thresholds,
+        obd=_section(data, "obd", ObdConfig),
+        can=_section(data, "can", CanConfig),
+        trip=_section(data, "trip", TripConfig),
+        led=_section(data, "led", LedConfig),
+        buzzer=_section(data, "buzzer", BuzzerConfig),
+        notify=_section(data, "notify", NotifyConfig),
+        storage=_section(data, "storage", StorageConfig),
+        supabase=SupabaseConfig(**supa),
+    )
